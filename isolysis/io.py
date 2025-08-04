@@ -3,10 +3,12 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
 
+
 class Coordinate(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the point")
     lat: float = Field(..., ge=-90, le=90, description="Latitude")
     lon: float = Field(..., ge=-180, le=180, description="Longitude")
+
 
 class Centroid(BaseModel):
     id: str = Field(..., description="Unique identifier for the centroid/hub")
@@ -14,28 +16,31 @@ class Centroid(BaseModel):
     lon: float = Field(..., ge=-180, le=180, description="Longitude")
     rho: float = Field(..., gt=0, description="Travel time (in hours) for isochrone")
 
+
 class IsoRequest(BaseModel):
     coordinates: List[Coordinate] = Field(..., description="Points to be analyzed")
     centroids: List[Centroid] = Field(..., description="Isochrone centers")
 
-    @field_validator('coordinates')
+    @field_validator("coordinates")
     @classmethod
     def coordinates_not_empty(cls, v):
         if not v or len(v) < 1:
-            raise ValueError('At least one coordinate is required.')
+            raise ValueError("At least one coordinate is required.")
         return v
 
-    @field_validator('centroids')
+    @field_validator("centroids")
     @classmethod
     def centroids_not_empty(cls, v):
         if not v or len(v) < 1:
-            raise ValueError('At least one centroid is required.')
+            raise ValueError("At least one centroid is required.")
         return v
+
 
 class IsoCounts(BaseModel):
     label: str = Field(..., description="Identifier for the isochrone or intersection")
     count: int = Field(..., description="Number of points in this region")
     ids: List[str] = Field(..., description="IDs of points in this region")
+
 
 class IsoResponse(BaseModel):
     total_points: int

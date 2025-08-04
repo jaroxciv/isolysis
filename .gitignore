@@ -1,6 +1,55 @@
-.venv/
+# Python
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+*.egg-info/
 .env
+.venv/
+env/
+venv/
+*.sqlite3
+.DS_Store
 
-# Python log files
+# OSMnx/Overpass/Requests cache
+.cache/
+cache/
+osmnx_cache/
+osmnx_logs/
 *.log
+*.osm
+*.osm.bz2
+*.osm.pbf
+*.xml
+
+# GeoPandas/Matplotlib
+*.gpkg
+*.geojson
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.qpj
+*.png
+*.svg
+*.jpg
+
+# Project outputs
+outputs/*
+!outputs/.gitkeep
+
+# Network files (optionally ignore heavy predownloaded graphs)
+networks/*
+!networks/.gitkeep
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# Misc
+*.bak
+*.tmp
+*.zip
