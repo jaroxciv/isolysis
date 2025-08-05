@@ -3,7 +3,7 @@ import argparse
 from loguru import logger
 from isolysis.io import IsoRequest, Centroid, Coordinate
 from isolysis.isochrone import compute_isochrones
-from isolysis.utils import log_timing
+from isolysis.utils import log_timing, harmonize_isochrones_columns
 import geopandas as gpd
 import osmnx as ox
 
@@ -14,7 +14,7 @@ def main():
     parser.add_argument(
         "--provider",
         type=str,
-        choices=["osmnx", "iso4app"],
+        choices=["osmnx", "iso4app", "mapbox"],
         default="osmnx",
         help="Which provider to use for isochrone calculation",
     )
@@ -22,7 +22,7 @@ def main():
 
     out_dir = "outputs"
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, "isochrones.gpkg")
+    out_path = os.path.join(out_dir, f"{args.provider}_isochrones.gpkg")
 
     # Optionally load network for OSMnx
     G = None
@@ -57,7 +57,7 @@ def main():
     )
     logger.info("Generated {} banded isochrones.", len(isochrones))
 
-    gdf = gpd.GeoDataFrame(isochrones, geometry="geometry", crs="EPSG:4326")
+    gdf = harmonize_isochrones_columns(isochrones)
     gdf.to_file(out_path, driver="GPKG", layer="isochrones")
     logger.success(f"Isochrone polygons saved to {out_path}")
 
