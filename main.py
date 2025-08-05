@@ -1,8 +1,11 @@
 import os
+import json
 import argparse
+import pandas as pd
 from loguru import logger
 from isolysis.io import IsoRequest, Centroid, Coordinate
 from isolysis.isochrone import compute_isochrones
+from isolysis.analysis import analyze_isochrone_coverage
 from isolysis.utils import log_timing, harmonize_isochrones_columns
 import geopandas as gpd
 import osmnx as ox
@@ -17,6 +20,11 @@ def main():
         choices=["osmnx", "iso4app", "mapbox"],
         default="osmnx",
         help="Which provider to use for isochrone calculation",
+    )
+    parser.add_argument(
+        "--plot-points",
+        action="store_true",
+        help="If set, plots the coordinates (points) together with the isochrones"
     )
     args = parser.parse_args()
 
@@ -36,11 +44,11 @@ def main():
                 f"No predownloaded network found at {graph_path}, will download on the fly"
             )
 
+    with open("data/coords.json", encoding="utf-8") as f:
+        coords = [Coordinate(**c) for c in json.load(f)]
+
     req = IsoRequest(
-        coordinates=[
-            Coordinate(id="a", lat=13.7, lon=-89.2),
-            Coordinate(id="b", lat=13.72, lon=-89.19),
-        ],
+        coordinates=coords,
         centroids=[
             Centroid(id="hub1", lat=13.6900881, lon=-89.249961, rho=1),
             Centroid(id="hub2", lat=13.4785139, lon=-88.2103747, rho=1),
@@ -60,6 +68,29 @@ def main():
     gdf = harmonize_isochrones_columns(isochrones)
     gdf.to_file(out_path, driver="GPKG", layer="isochrones")
     logger.success(f"Isochrone polygons saved to {out_path}")
+
+    coords_df = pd.DataFrame([c.model_dump() for c in coords])
+    points_gdf = gpd.GeoDataFrame(
+        coords_df,
+        geometry=gpd.points_from_xy(coords_df.lon, coords_df.lat),
+        crs="EPSG:4326",
+    )
+
+    # Analyze isochrone coverage
+    results = analyze_isochrone_coverage(gdf, points_gdf)
+
+    # Log results (as a table and/or JSON)
+    import pprint
+
+    logger.info("Isochrone coverage analysis result:\n{}", pprint.pformat(results))
+
+    # Save as JSON in outputs/
+    os.makedirs("outputs", exist_ok=True)
+    results_path = os.path.join("outputs", "isochrone_coverage.json")
+    with open(results_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+
+    logger.success(f"Isochrone coverage results saved to {results_path}")
 
 
 if __name__ == "__main__":
