@@ -50,5 +50,6 @@ class IsoCounts(BaseModel):
 class IsoResponse(BaseModel):
     total_points: int
     counts: List[IsoCounts]
+    intersections: Optional[List[IsoCounts]] = None
     oob_count: int
     oob_ids: List[str]
