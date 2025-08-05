@@ -1,30 +1,40 @@
 import os
+import argparse
 from loguru import logger
 from isolysis.io import IsoRequest, Centroid, Coordinate
 from isolysis.isochrone import compute_isochrones
 from isolysis.utils import log_timing
 import geopandas as gpd
-
 import osmnx as ox
 
 
 @log_timing
 def main():
-    # Prepare output directory
+    parser = argparse.ArgumentParser(description="Isochrone computation CLI")
+    parser.add_argument(
+        "--provider",
+        type=str,
+        choices=["osmnx", "iso4app"],
+        default="osmnx",
+        help="Which provider to use for isochrone calculation",
+    )
+    args = parser.parse_args()
+
     out_dir = "outputs"
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "isochrones.gpkg")
 
-    # Optional: path to predownloaded network
-    network_path = os.path.join("networks", "el_salvador_drive.graphml")
+    # Optionally load network for OSMnx
     G = None
-    if os.path.exists(network_path):
-        logger.info(f"Loading predownloaded network: {network_path}")
-        G = ox.load_graphml(network_path)
-    else:
-        logger.warning(
-            f"Predownloaded network not found, will download on demand: {network_path}"
-        )
+    if args.provider == "osmnx":
+        graph_path = os.path.join("networks", "el_salvador_drive.graphml")
+        if os.path.exists(graph_path):
+            logger.info(f"Loading predownloaded network: {graph_path}")
+            G = ox.load_graphml(graph_path)
+        else:
+            logger.warning(
+                f"No predownloaded network found at {graph_path}, will download on the fly"
+            )
 
     req = IsoRequest(
         coordinates=[
@@ -38,18 +48,15 @@ def main():
     )
     centroids = [c.model_dump() for c in req.centroids]
 
-    # Generate banded isochrones (e.g., every 0.5h up to rho)
     isochrones = compute_isochrones(
         centroids,
-        provider="osmnx",
-        travel_speed_kph=20,
-        interval=0.25,  # 30 min bands
-        project_utm=False,
+        provider=args.provider,
+        travel_speed_kph=30,
+        interval=0.25,
         G=G,
     )
     logger.info("Generated {} banded isochrones.", len(isochrones))
 
-    # Save as GPKG with all attributes
     gdf = gpd.GeoDataFrame(isochrones, geometry="geometry", crs="EPSG:4326")
     gdf.to_file(out_path, driver="GPKG", layer="isochrones")
     logger.success(f"Isochrone polygons saved to {out_path}")
