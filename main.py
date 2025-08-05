@@ -3,9 +3,12 @@ import json
 import argparse
 import pandas as pd
 from loguru import logger
-from isolysis.io import IsoRequest, Centroid, Coordinate
+from isolysis.io import IsoRequest, Centroid, Coordinate, IsoCounts, IsoResponse
 from isolysis.isochrone import compute_isochrones
-from isolysis.analysis import analyze_isochrone_coverage
+from isolysis.analysis import (
+    analyze_isochrone_coverage,
+    analyze_isochrone_intersections,
+)
 from isolysis.utils import log_timing, harmonize_isochrones_columns
 import geopandas as gpd
 import osmnx as ox
@@ -24,7 +27,7 @@ def main():
     parser.add_argument(
         "--plot-points",
         action="store_true",
-        help="If set, plots the coordinates (points) together with the isochrones"
+        help="If set, plots the coordinates (points) together with the isochrones",
     )
     args = parser.parse_args()
 
@@ -47,12 +50,14 @@ def main():
     with open("data/coords.json", encoding="utf-8") as f:
         coords = [Coordinate(**c) for c in json.load(f)]
 
+    centroids = [
+        Centroid(id="hub1", lat=13.6900881, lon=-89.249961, rho=1),
+        Centroid(id="hub2", lat=13.4785139, lon=-88.2103747, rho=1),
+        Centroid(id="hub3", lat=13.9837809, lon=-89.6406763, rho=1),
+    ]
     req = IsoRequest(
         coordinates=coords,
-        centroids=[
-            Centroid(id="hub1", lat=13.6900881, lon=-89.249961, rho=1),
-            Centroid(id="hub2", lat=13.4785139, lon=-88.2103747, rho=1),
-        ],
+        centroids=centroids,
     )
     centroids = [c.model_dump() for c in req.centroids]
 
@@ -76,19 +81,36 @@ def main():
         crs="EPSG:4326",
     )
 
-    # Analyze isochrone coverage
-    results = analyze_isochrone_coverage(gdf, points_gdf)
+    # --- Analyze isochrone coverage
+    coverage_result = analyze_isochrone_coverage(gdf, points_gdf)
+    intersections = analyze_isochrone_intersections(gdf, points_gdf)
 
-    # Log results (as a table and/or JSON)
-    import pprint
+    # Convert to IsoResponse
+    # Expecting coverage_result to have: total_points, counts (list), oob_count, oob_ids
+    response = IsoResponse(
+        total_points=coverage_result["total_points"],
+        counts=[
+            IsoCounts(label=c["label"], count=c["count"], ids=c["ids"])
+            for c in coverage_result["counts"]
+        ],
+        intersections=(
+            [IsoCounts(**c) for c in intersections] if intersections else None
+        ),
+        oob_count=coverage_result["oob_count"],
+        oob_ids=coverage_result["oob_ids"],
+    )
 
-    logger.info("Isochrone coverage analysis result:\n{}", pprint.pformat(results))
+    # Log results (as a table and JSON)
+    output_json = json.dumps(response.model_dump(), indent=2, ensure_ascii=False)
+    logger.info(
+        "Isochrone coverage analysis result:\n{}",
+        output_json,
+    )
 
     # Save as JSON in outputs/
-    os.makedirs("outputs", exist_ok=True)
     results_path = os.path.join("outputs", "isochrone_coverage.json")
     with open(results_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
+        f.write(output_json)
 
     logger.success(f"Isochrone coverage results saved to {results_path}")
 
