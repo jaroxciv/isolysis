@@ -8,6 +8,11 @@ class Coordinate(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the point")
     lat: float = Field(..., ge=-90, le=90, description="Latitude")
     lon: float = Field(..., ge=-180, le=180, description="Longitude")
+    region: Optional[str] = Field(None, description="Region name")
+    department: Optional[str] = Field(None, description="Department (state/province)")
+    municipality: Optional[str] = Field(None, description="Municipality")
+    unit_sis: Optional[str] = Field(None, description="Health unit or SIS unit name")
+    name: Optional[str] = Field(None, description="Full name of facility/unit")
 
 
 class Centroid(BaseModel):
