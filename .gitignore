@@ -37,6 +37,10 @@ osmnx_logs/
 *.svg
 *.jpg
 
+# Project data
+data/*
+!data/.gitkeep
+
 # Project outputs
 outputs/*
 !outputs/.gitkeep
