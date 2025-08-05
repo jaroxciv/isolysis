@@ -59,14 +59,14 @@ def plot_isochrones(
     if points_gdf is not None and not points_gdf.empty:
         points_web = points_gdf.to_crs(epsg=3857)
         points_web.plot(
-            ax=ax, 
-            color="grey", 
-            markersize=8, 
-            marker="o", 
+            ax=ax,
+            color="grey",
+            markersize=8,
+            marker="o",
             edgecolor="black",
             linewidth=0.5,
-            label="Points"
-            )
+            label="Points",
+        )
 
     ctx.add_basemap(
         ax,
