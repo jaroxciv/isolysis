@@ -4,6 +4,7 @@ import time
 import geopandas as gpd
 from loguru import logger
 from functools import wraps
+from typing import List, Dict, Any, Optional
 
 
 def save_polygons_gpkg(
@@ -55,3 +56,32 @@ def log_timing(func):
         return result
 
     return wrapper
+
+
+def harmonize_isochrones_columns(records: List[Dict[str, Any]]) -> gpd.GeoDataFrame:
+    """
+    Convert a list of isochrone dicts from any provider to a GeoDataFrame
+    with a standardized 'band_hours' column (float) and 'geometry'.
+    """
+    # Make DataFrame
+    gdf = gpd.GeoDataFrame(records, crs="EPSG:4326")
+
+    # Try to handle various possible band columns
+    if "band_hours" not in gdf.columns:
+        if "band_minutes" in gdf.columns:
+            gdf["band_hours"] = gdf["band_minutes"] / 60.0
+        elif "time_min" in gdf.columns:
+            gdf["band_hours"] = gdf["time_min"] / 60.0
+        elif "band_secs" in gdf.columns:
+            gdf["band_hours"] = gdf["band_secs"] / 3600.0
+        elif "band_km" in gdf.columns:
+            # For distance-based isochrones: optionally convert to hours with speed info if needed
+            pass
+        else:
+            raise ValueError(
+                "No known band column found (band_hours, band_minutes, time_min, etc.)"
+            )
+    # Ensure geometry column is properly set as geometry
+    if "geometry" in gdf.columns:
+        gdf.set_geometry("geometry", inplace=True)
+    return gdf
