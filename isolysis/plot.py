@@ -11,6 +11,7 @@ def plot_isochrones(
     color_by: str = "band_hours",
     out_png: str = None,
     provider: str = None,
+    points_gdf: gpd.GeoDataFrame = None,
     figsize=(10, 10),
     cmap="plasma",
     alpha=0.5,
@@ -53,6 +54,19 @@ def plot_isochrones(
         linewidth=linewidth,
         legend_kwds={"label": "Travel time (hours)"},
     )
+
+    # Overlay points if provided
+    if points_gdf is not None and not points_gdf.empty:
+        points_web = points_gdf.to_crs(epsg=3857)
+        points_web.plot(
+            ax=ax, 
+            color="grey", 
+            markersize=8, 
+            marker="o", 
+            edgecolor="black",
+            linewidth=0.5,
+            label="Points"
+            )
 
     ctx.add_basemap(
         ax,
