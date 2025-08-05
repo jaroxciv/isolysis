@@ -1,10 +1,16 @@
-# isolysis/isochrone.py
-
+import os
+import requests
+import alphashape
 import osmnx as ox
 import networkx as nx
-from shapely.geometry import MultiPoint, Point
+import geopandas as gpd
+from shapely.geometry import shape, Point, MultiPoint
 from typing import List, Dict, Any, Optional
 from loguru import logger
+from dotenv import load_dotenv
+from abc import ABC, abstractmethod
+
+load_dotenv()
 
 
 def generate_time_bands(max_rho: float, interval: float = 0.5) -> List[float]:
@@ -18,77 +24,121 @@ def generate_time_bands(max_rho: float, interval: float = 0.5) -> List[float]:
 
 
 def extract_local_subgraph(G, lat, lon, max_dist_m):
-    """
-    Extract a subgraph around (lat, lon) with radius max_dist_m (meters).
-    """
     import numpy as np
     from osmnx.distance import great_circle
 
     node_ids = list(G.nodes())
     node_x = np.array([G.nodes[n]["x"] for n in node_ids])
     node_y = np.array([G.nodes[n]["y"] for n in node_ids])
-    # Calculate distances to all nodes (in meters)
     dists = great_circle(lat, lon, node_y, node_x)
     nodes_within_radius = [n for n, d in zip(node_ids, dists) if d <= max_dist_m]
     subgraph = G.subgraph(nodes_within_radius).copy()
     return subgraph
 
 
-def compute_osmnx_isochrones(
-    centroids: List[Dict[str, Any]],
-    travel_speed_kph: float = 30,
-    network_type: str = "drive",
-    interval: float = 0.5,
-    project_utm: bool = False,
-    G: Optional[nx.MultiDiGraph] = None,  # <-- accept preloaded graph!
-    max_dist_buffer: float = 1.1,
-) -> List[Dict[str, Any]]:
-    results = []
-    for c in centroids:
-        lon = float(c["lon"])
-        lat = float(c["lat"])
-        max_rho = float(c.get("rho", 1.0))  # maximum hours
-        bands = generate_time_bands(max_rho, interval)
-        max_dist_m = travel_speed_kph * max_rho * 1000 * max_dist_buffer
+# Abstract base class for providers
+class IsochroneProvider(ABC):
+    @abstractmethod
+    def compute(
+        self, centroids: List[Dict[str, Any]], **kwargs
+    ) -> List[Dict[str, Any]]:
+        pass
 
-        # Use provided network or download subgraph as before
-        if G is not None:
-            logger.info(
-                "Extracting subgraph for id={} from preloaded network",
-                c.get("id", "unknown"),
-            )
-            local_G = extract_local_subgraph(G, lat, lon, max_dist_m)
-            # Optionally project subgraph here
-            if project_utm:
-                local_G = ox.projection.project_graph(local_G)
-        else:
-            logger.info("Downloading OSMnx network for id={}", c.get("id", "unknown"))
-            local_G = ox.graph_from_point(
-                (lat, lon), dist=max_dist_m, network_type=network_type
-            )
-            if project_utm:
+
+# OSMnx implementation
+from typing import List, Dict, Any, Optional
+from shapely.geometry import Point, MultiPoint
+import networkx as nx
+import osmnx as ox
+import alphashape
+from loguru import logger
+
+
+class OsmnxIsochroneProvider(IsochroneProvider):
+    def compute(
+        self,
+        centroids: List[Dict[str, Any]],
+        travel_speed_kph: float = 30,
+        network_type: str = "drive",
+        interval: float = 0.5,
+        project_utm: bool = False,
+        G: Optional[nx.MultiDiGraph] = None,
+        max_dist_buffer: float = 1.1,
+        alpha: Optional[float] = 0.01,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        results = []
+        meters_per_minute = (travel_speed_kph * 1000) / 60  # Precompute
+
+        for c in centroids:
+            lon, lat = float(c["lon"]), float(c["lat"])
+            max_rho = float(c.get("rho", 1.0))
+            bands = generate_time_bands(max_rho, interval)
+            max_dist_m = travel_speed_kph * max_rho * 1000 * max_dist_buffer
+
+            # Prepare local graph
+            centroid_id = c.get("id", "unknown")
+            if G is not None:
+                logger.info(
+                    "Extracting subgraph for id={} from preloaded network", centroid_id
+                )
+                local_G = extract_local_subgraph(G, lat, lon, max_dist_m)
+            else:
+                logger.info("Downloading OSMnx network for id={}", centroid_id)
+                local_G = ox.graph_from_point(
+                    (lat, lon), dist=max_dist_m, network_type=network_type
+                )
+
+            # Project if needed
+            if project_utm and not getattr(local_G.graph, "is_projected", False):
                 local_G = ox.projection.project_graph(local_G)
 
-        meters_per_minute = (travel_speed_kph * 1000) / 60
-        for u, v, k, data in local_G.edges(keys=True, data=True):
-            data["travel_time"] = data["length"] / meters_per_minute
-        center_node = ox.distance.nearest_nodes(local_G, lon, lat)
-        for band in bands:
-            trip_time = band * 60  # band in hours, convert to minutes
-            subgraph = nx.ego_graph(
-                local_G, center_node, radius=trip_time, distance="travel_time"
-            )
-            node_points = [
-                Point((data["x"], data["y"]))
-                for node, data in subgraph.nodes(data=True)
-            ]
-            if node_points:
-                polygon = MultiPoint(node_points).convex_hull
+            # Add travel_time edge attribute once
+            for _, _, _, data in local_G.edges(keys=True, data=True):
+                data["travel_time"] = data["length"] / meters_per_minute
+
+            # Find center node in projected space if needed
+            center_node = ox.distance.nearest_nodes(local_G, lon, lat)
+
+            for band in bands:
+                trip_time = band * 60  # hours to minutes
+                subgraph = nx.ego_graph(
+                    local_G, center_node, radius=trip_time, distance="travel_time"
+                )
+
+                if subgraph.number_of_nodes() == 0:
+                    logger.warning(
+                        "No reachable nodes for centroid id={} band={:.2f}h",
+                        centroid_id,
+                        band,
+                    )
+                    continue
+
+                coords = [
+                    (data["x"], data["y"]) for _, data in subgraph.nodes(data=True)
+                ]
+
+                poly = None
+                if len(coords) >= 4:
+                    try:
+                        poly = alphashape.alphashape(coords, alpha)
+                        # If alpha shape is MultiPolygon, get the largest
+                        if hasattr(poly, "geoms"):
+                            poly = max(list(poly.geoms), key=lambda g: g.area)
+                    except Exception as e:
+                        logger.warning(
+                            f"Alpha shape failed, falling back to convex hull: {e}"
+                        )
+
+                if poly is None:
+                    # Fallback to convex hull
+                    poly = MultiPoint([Point(xy) for xy in coords]).convex_hull
+
                 results.append(
                     {
-                        "centroid_id": c.get("id", "unknown"),
+                        "centroid_id": centroid_id,
                         "band_hours": band,
-                        "geometry": polygon,
+                        "geometry": poly,
                         "rho": max_rho,
                         "lat": lat,
                         "lon": lon,
@@ -97,21 +147,105 @@ def compute_osmnx_isochrones(
                 logger.success(
                     "Isochrone band {:.2f}h generated for id={}",
                     band,
-                    c.get("id", "unknown"),
+                    centroid_id,
                 )
-            else:
-                logger.warning(
-                    "No reachable nodes for centroid id={} band={}",
-                    c.get("id", "unknown"),
-                    band,
-                )
-    return results
+        return results
 
 
-def compute_isochrones(
-    centroids: List[Dict[str, Any]], provider: str = "osmnx", **kwargs
-) -> List[Dict[str, Any]]:
+# Iso4App implementation
+class Iso4AppIsochroneProvider(IsochroneProvider):
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+
+    def compute(
+        self,
+        centroids: List[Dict[str, Any]],
+        value_type: str = "isochrone",
+        travel_type: str = "motor_vehicle",
+        interval: float = 1.0,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        isochrones = []
+        BASE_URL = "http://www.iso4app.net/rest/1.3/isoline.geojson"
+        for c in centroids:
+            lat = c["lat"]
+            lon = c["lon"]
+            centroid_id = c.get("id", "unknown")
+            rho = c.get("rho", 1.0)
+            max_secs = int(float(rho) * 3600)
+            bands = [
+                int(t * 3600)
+                for t in [i * interval for i in range(1, int(rho / interval) + 1)]
+            ]
+            if not bands:
+                bands = [max_secs]
+
+            # General info: which bands, etc.
+            logger.info(
+                f"Iso4App: Requesting isochrones for id={centroid_id}, "
+                f"bands={[b // 60 for b in bands]} min, travel_type={travel_type}"
+            )
+
+            for band_secs in bands:
+                params = {
+                    "licKey": self.api_key,
+                    "type": value_type,
+                    "value": band_secs,
+                    "lat": lat,
+                    "lng": lon,
+                    "mobility": travel_type,
+                    "format": "geojson",
+                }
+                try:
+                    response = requests.get(BASE_URL, params=params)
+                    if response.status_code != 200:
+                        logger.error(
+                            f"Iso4App [{centroid_id} {band_secs // 60}min]: "
+                            f"API error {response.status_code}, {response.text}"
+                        )
+                        continue
+                    geojson = response.json()
+                    poly = None
+                    for feat in geojson.get("features", []):
+                        if feat["geometry"]["type"] in ["Polygon", "MultiPolygon"]:
+                            poly = shape(feat["geometry"])
+                            break
+                    if poly is not None:
+                        isochrones.append(
+                            {
+                                "id": centroid_id,
+                                "band_hours": band_secs / 3600,
+                                "geometry": poly,
+                            }
+                        )
+                        logger.success(
+                            f"Iso4App: Isochrone band {band_secs // 60}min generated for id={centroid_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Iso4App: No isochrone geometry for id={centroid_id}, band={band_secs // 60}min"
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Iso4App: Exception for id={centroid_id}, band={band_secs // 60}min: {e}"
+                    )
+        return isochrones
+
+
+# Factory function
+def get_isochrone_provider(provider: str, **kwargs) -> IsochroneProvider:
     if provider == "osmnx":
-        return compute_osmnx_isochrones(centroids, **kwargs)
+        return OsmnxIsochroneProvider()
+    elif provider == "iso4app":
+        api_key = kwargs.get("api_key") or os.getenv("ISO4APP_API_KEY")
+        if not api_key:
+            raise ValueError("api_key is required for Iso4App provider")
+        return Iso4AppIsochroneProvider(api_key)
     else:
         raise ValueError(f"Unknown isochrone provider: {provider}")
+
+
+# Main interface for user code (drop-in compatible)
+def compute_isochrones(centroids, provider="osmnx", **kwargs):
+    iso_provider = get_isochrone_provider(provider, **kwargs)
+    return iso_provider.compute(centroids, **kwargs)
