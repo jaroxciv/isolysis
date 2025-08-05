@@ -15,7 +15,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--plot-points",
         action="store_true",
-        help="If set, overlay the points from data/coords.json"
+        help="If set, overlay the points from data/coords.json",
     )
     args = parser.parse_args()
 
@@ -30,8 +30,10 @@ if __name__ == "__main__":
         # Create GeoDataFrame from list of dicts
         points_gdf = gpd.GeoDataFrame(
             coords,
-            geometry=gpd.points_from_xy([c["lon"] for c in coords], [c["lat"] for c in coords]),
-            crs="EPSG:4326"
+            geometry=gpd.points_from_xy(
+                [c["lon"] for c in coords], [c["lat"] for c in coords]
+            ),
+            crs="EPSG:4326",
         )
 
     plot_isochrones(
