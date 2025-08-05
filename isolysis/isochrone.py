@@ -46,14 +46,6 @@ class IsochroneProvider(ABC):
 
 
 # OSMnx implementation
-from typing import List, Dict, Any, Optional
-from shapely.geometry import Point, MultiPoint
-import networkx as nx
-import osmnx as ox
-import alphashape
-from loguru import logger
-
-
 class OsmnxIsochroneProvider(IsochroneProvider):
     def compute(
         self,
@@ -154,6 +146,8 @@ class OsmnxIsochroneProvider(IsochroneProvider):
 
 # Iso4App implementation
 class Iso4AppIsochroneProvider(IsochroneProvider):
+    BASE_URL = "http://www.iso4app.net/rest/1.3/isoline.geojson"
+
     def __init__(self, api_key: str):
         self.api_key = api_key
 
@@ -166,7 +160,6 @@ class Iso4AppIsochroneProvider(IsochroneProvider):
         **kwargs,
     ) -> List[Dict[str, Any]]:
         isochrones = []
-        BASE_URL = "http://www.iso4app.net/rest/1.3/isoline.geojson"
         for c in centroids:
             lat = c["lat"]
             lon = c["lon"]
@@ -197,7 +190,7 @@ class Iso4AppIsochroneProvider(IsochroneProvider):
                     "format": "geojson",
                 }
                 try:
-                    response = requests.get(BASE_URL, params=params)
+                    response = requests.get(self.BASE_URL, params=params)
                     if response.status_code != 200:
                         logger.error(
                             f"Iso4App [{centroid_id} {band_secs // 60}min]: "
@@ -232,6 +225,69 @@ class Iso4AppIsochroneProvider(IsochroneProvider):
         return isochrones
 
 
+class MapboxIsochroneProvider(IsochroneProvider):
+    BASE_URL = "https://api.mapbox.com/isochrone/v1/mapbox"
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+
+    def compute(
+        self,
+        centroids: List[Dict[str, Any]],
+        interval: float = 0.25,  # in hours
+        profile: str = "driving",
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        isochrones = []
+        for c in centroids:
+            lat = c["lat"]
+            lon = c["lon"]
+            centroid_id = c.get("id", "unknown")
+            rho = c.get("rho", 1.0)
+            bands_hours = generate_time_bands(rho, interval)
+            bands_minutes = [int(b * 60) for b in bands_hours]
+            logger.info(
+                f"Mapbox: Requesting isochrones for id={centroid_id}, "
+                f"bands={bands_minutes} min, profile={profile}, location=({lat}, {lon})"
+            )
+            params = {
+                "contours_minutes": ",".join(map(str, bands_minutes)),
+                "polygons": "true",
+                "access_token": self.api_key,
+                "denoise": 1,
+            }
+            url = f"{self.BASE_URL}/{profile}/{lon},{lat}"
+            try:
+                response = requests.get(url, params=params)
+                if response.status_code != 200:
+                    logger.error(
+                        f"MapboxIsochrone [{centroid_id}]: API error {response.status_code}, {response.text}"
+                    )
+                    continue
+
+                # Mapbox returns features ordered largest (outermost) to smallest (innermost):
+                # We reverse bands so the largest band matches the largest polygon.
+                geojson = response.json()
+                for band_h, feat in zip(
+                    reversed(bands_hours), geojson.get("features", [])
+                ):
+                    if feat["geometry"]["type"] in ["Polygon", "MultiPolygon"]:
+                        poly = shape(feat["geometry"])
+                        isochrones.append(
+                            {
+                                "id": centroid_id,
+                                "band_hours": band_h,
+                                "geometry": poly,
+                            }
+                        )
+                        logger.success(
+                            f"Mapbox: Isochrone band {band_h}h generated for id={centroid_id}"
+                        )
+            except Exception as e:
+                logger.error(f"MapboxIsochrone: Exception for id={centroid_id}: {e}")
+        return isochrones
+
+
 # Factory function
 def get_isochrone_provider(provider: str, **kwargs) -> IsochroneProvider:
     if provider == "osmnx":
@@ -241,6 +297,11 @@ def get_isochrone_provider(provider: str, **kwargs) -> IsochroneProvider:
         if not api_key:
             raise ValueError("api_key is required for Iso4App provider")
         return Iso4AppIsochroneProvider(api_key)
+    elif provider == "mapbox":
+        api_key = kwargs.get("api_key") or os.getenv("MAPBOX_API_KEY")
+        if not api_key:
+            raise ValueError("api_key is required for Mapbox provider")
+        return MapboxIsochroneProvider(api_key)
     else:
         raise ValueError(f"Unknown isochrone provider: {provider}")
 
