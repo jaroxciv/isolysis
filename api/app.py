@@ -63,7 +63,9 @@ def _cache_set(key: str, value: Any):
 # ---------- request/response DTOs ----------
 class ComputeOptions(BaseModel):
     provider: ProviderName = Field(..., description="Which engine to use")
-    interval: float = Field(0.25, gt=0, description="Band interval (hours)")
+    interval: Optional[float] = Field(
+        None, gt=0, description="Band interval (hours), defaults to rho/4 if not provided"
+    )
     travel_speed_kph: float = Field(30, gt=0, description="Only used by osmnx")
     profile: Optional[str] = Field("driving", description="Mapbox profile")
     denoise: Optional[float] = Field(None, description="Mapbox denoise [0..1]")
@@ -77,8 +79,8 @@ class ComputeRequest(BaseModel):
 
 class IsoServiceResponse(BaseModel):
     provider: ProviderName
-    interval: float
-    coverage: IsoResponse
+    interval: Optional[float]
+    coverage: Optional[IsoResponse]
     polygons_geojson: Dict[str, Any]
 
 
@@ -109,13 +111,10 @@ def isochrones(req: ComputeRequest):
     key = _cache_key(
         req.options.provider,
         {
-            "interval": req.options.interval,
-            "speed": req.options.travel_speed_kph,
-            "profile": req.options.profile,
-            "denoise": req.options.denoise,
-            "generalize": req.options.generalize,
             "centroids": [c.model_dump() for c in req.isorequest.centroids],
-            "n_points": len(req.isorequest.coordinates),
+            "n_points": (
+                len(req.isorequest.coordinates) if req.isorequest.coordinates else 0
+            ),
         },
     )
     cached = _cache_get(key)
@@ -127,10 +126,10 @@ def isochrones(req: ComputeRequest):
     centroids_payload = [c.model_dump() for c in req.isorequest.centroids]
     kwargs: Dict[str, Any] = {
         "provider": req.options.provider,
-        "interval": req.options.interval,
         "travel_speed_kph": req.options.travel_speed_kph,
     }
-    # Optional Mapbox knobs
+    if req.options.interval is not None:
+        kwargs["interval"] = req.options.interval
     if req.options.profile:
         kwargs["profile"] = req.options.profile
     if req.options.denoise is not None:
@@ -147,24 +146,27 @@ def isochrones(req: ComputeRequest):
     if gdf.crs is None:
         gdf.set_crs("EPSG:4326", inplace=True)
 
-    # Convert coordinates into points GeoDataFrame
-    coords_df = pd.DataFrame([c.model_dump() for c in req.isorequest.coordinates])
-    points_gdf = gpd.GeoDataFrame(
-        coords_df,
-        geometry=gpd.points_from_xy(coords_df.lon, coords_df.lat),
-        crs="EPSG:4326",
-    )
+    # --- Optional analysis, if coordinates are provided
+    coverage_resp = None
+    if req.isorequest.coordinates:
+        # Convert coordinates into points GeoDataFrame
+        coords_df = pd.DataFrame([c.model_dump() for c in req.isorequest.coordinates])
+        points_gdf = gpd.GeoDataFrame(
+            coords_df,
+            geometry=gpd.points_from_xy(coords_df.lon, coords_df.lat),
+            crs="EPSG:4326",
+        )
 
-    # Coverage + inter-centroid intersections
-    coverage = analyze_isochrone_coverage(gdf, points_gdf)
-    intersections = analyze_isochrone_intersections(gdf, points_gdf)
-    coverage_resp = IsoResponse(
-        total_points=coverage["total_points"],
-        counts=[IsoCounts(**c) for c in coverage["counts"]],
-        intersections=([IsoCounts(**c) for c in intersections] or None),
-        oob_count=coverage["oob_count"],
-        oob_ids=coverage["oob_ids"],
-    )
+        # Coverage + inter-centroid intersections
+        coverage = analyze_isochrone_coverage(gdf, points_gdf)
+        intersections = analyze_isochrone_intersections(gdf, points_gdf)
+        coverage_resp = IsoResponse(
+            total_points=coverage["total_points"],
+            counts=[IsoCounts(**c) for c in coverage["counts"]],
+            intersections=([IsoCounts(**c) for c in intersections] or None),
+            oob_count=coverage["oob_count"],
+            oob_ids=coverage["oob_ids"],
+        )
 
     # Build service response
     service_resp = IsoServiceResponse(
@@ -176,3 +178,9 @@ def isochrones(req: ComputeRequest):
 
     _cache_set(key, service_resp)
     return service_resp
+
+
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to the Isochrone Service API"}
+
