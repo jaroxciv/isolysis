@@ -23,15 +23,8 @@ class Centroid(BaseModel):
 
 
 class IsoRequest(BaseModel):
-    coordinates: List[Coordinate] = Field(..., description="Points to be analyzed")
+    coordinates: Optional[List[Coordinate]] = Field(None, description="Points to be analyzed")
     centroids: List[Centroid] = Field(..., description="Isochrone centers")
-
-    @field_validator("coordinates")
-    @classmethod
-    def coordinates_not_empty(cls, v):
-        if not v or len(v) < 1:
-            raise ValueError("At least one coordinate is required.")
-        return v
 
     @field_validator("centroids")
     @classmethod
