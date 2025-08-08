@@ -52,8 +52,10 @@ networks/*
 # Jupyter
 .ipynb_checkpoints
 *.ipynb
+research
 
 # Misc
 *.bak
 *.tmp
 *.zip
+.streamlit
