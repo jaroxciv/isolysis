@@ -52,7 +52,7 @@ class OsmnxIsochroneProvider(IsochroneProvider):
         centroids: List[Dict[str, Any]],
         travel_speed_kph: float = 30,
         network_type: str = "drive",
-        interval: float = 0.5,
+        interval: Optional[float] = None,
         project_utm: bool = False,
         G: Optional[nx.MultiDiGraph] = None,
         max_dist_buffer: float = 1.1,
@@ -65,7 +65,8 @@ class OsmnxIsochroneProvider(IsochroneProvider):
         for c in centroids:
             lon, lat = float(c["lon"]), float(c["lat"])
             max_rho = float(c.get("rho", 1.0))
-            bands = generate_time_bands(max_rho, interval)
+            current_interval = interval if interval is not None else (max_rho / 4.0)
+            bands = generate_time_bands(max_rho, current_interval)
             max_dist_m = travel_speed_kph * max_rho * 1000 * max_dist_buffer
 
             # Prepare local graph
