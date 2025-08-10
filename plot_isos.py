@@ -1,6 +1,8 @@
 import argparse
-import geopandas as gpd
 import json
+
+import geopandas as gpd
+
 from isolysis.plot import plot_isochrones
 
 if __name__ == "__main__":

@@ -1,10 +1,11 @@
 # isolysis/utils.py
 
 import time
+from functools import wraps
+from typing import Any, Dict, List, Optional
+
 import geopandas as gpd
 from loguru import logger
-from functools import wraps
-from typing import List, Dict, Any, Optional
 
 
 def save_polygons_gpkg(

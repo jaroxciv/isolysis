@@ -1,7 +1,8 @@
 import os
+
+import contextily as ctx
 import geopandas as gpd
 import matplotlib.pyplot as plt
-import contextily as ctx
 from loguru import logger
 
 
