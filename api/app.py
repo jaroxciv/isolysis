@@ -1,8 +1,6 @@
 import os
-import time
 import json
-import hashlib
-from typing import Any, Dict, Optional, Literal
+from typing import Any, Dict, Optional, Literal, List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,174 +11,199 @@ from dotenv import load_dotenv, find_dotenv
 import pandas as pd
 import geopandas as gpd
 
-from isolysis.io import IsoRequest, IsoResponse, IsoCounts
 from isolysis.isochrone import compute_isochrones
 from isolysis.utils import harmonize_isochrones_columns
-from isolysis.analysis import (
-    analyze_isochrone_coverage,
-    analyze_isochrone_intersections,
-)
 
-# ---------- env / setup ----------
+# ---------- ENV SETUP ----------
 load_dotenv(find_dotenv(usecwd=True), override=True)
 
 ProviderName = Literal["osmnx", "iso4app", "mapbox"]
 
 
-def _missing_key_for(provider: ProviderName) -> Optional[str]:
-    if provider == "mapbox" and not (os.getenv("MAPBOX_API_KEY") or "").strip():
-        return "Missing MAPBOX_API_KEY"
-    if provider == "iso4app" and not (os.getenv("ISO4APP_API_KEY") or "").strip():
-        return "Missing ISO4APP_API_KEY"
+def validate_provider_keys(provider: ProviderName) -> Optional[str]:
+    """Check if required API keys are present"""
+    if provider == "mapbox" and not os.getenv("MAPBOX_API_KEY"):
+        return "Missing MAPBOX_API_KEY environment variable"
+    if provider == "iso4app" and not os.getenv("ISO4APP_API_KEY"):
+        return "Missing ISO4APP_API_KEY environment variable"
     return None
 
 
-# Simple in-memory cache (10 minutes)
-_CACHE: Dict[str, tuple[float, Any]] = {}
-_CACHE_TTL = 600  # seconds
+# ---------- REQUEST/RESPONSE MODELS ----------
+class CentroidRequest(BaseModel):
+    """Single centroid for isochrone computation"""
+
+    lat: float = Field(..., ge=-90, le=90, description="Latitude")
+    lon: float = Field(..., ge=-180, le=180, description="Longitude")
+    rho: float = Field(..., gt=0, description="Travel time in hours")
+    id: Optional[str] = Field(None, description="Centroid identifier")
 
 
-def _cache_key(provider: str, payload: Dict[str, Any]) -> str:
-    blob = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return f"{provider}:{hashlib.sha1(blob).hexdigest()}"
-
-
-def _cache_get(key: str):
-    entry = _CACHE.get(key)
-    if not entry:
-        return None
-    ts, val = entry
-    if time.time() - ts > _CACHE_TTL:
-        _CACHE.pop(key, None)
-        return None
-    return val
-
-
-def _cache_set(key: str, value: Any):
-    _CACHE[key] = (time.time(), value)
-
-
-# ---------- request/response DTOs ----------
 class ComputeOptions(BaseModel):
-    provider: ProviderName = Field(..., description="Which engine to use")
-    interval: Optional[float] = Field(
-        None, gt=0, description="Band interval (hours), defaults to rho/4 if not provided"
-    )
-    travel_speed_kph: float = Field(30, gt=0, description="Only used by osmnx")
-    profile: Optional[str] = Field("driving", description="Mapbox profile")
-    denoise: Optional[float] = Field(None, description="Mapbox denoise [0..1]")
-    generalize: Optional[float] = Field(None, description="Mapbox generalize meters")
+    """Options for isochrone computation"""
+
+    provider: ProviderName = Field("osmnx", description="Routing provider")
+    travel_speed_kph: float = Field(30, gt=0, description="Travel speed km/h")
+    num_bands: int = Field(1, ge=1, le=5, description="Number of time bands (1-5)")
+    profile: Optional[str] = Field("driving", description="Travel profile")
 
 
-class ComputeRequest(BaseModel):
-    isorequest: IsoRequest
-    options: ComputeOptions
+class IsochroneRequest(BaseModel):
+    """Request for computing isochrones"""
+
+    centroids: List[CentroidRequest]
+    options: ComputeOptions = Field(default_factory=ComputeOptions)
 
 
-class IsoServiceResponse(BaseModel):
-    provider: ProviderName
-    interval: Optional[float]
-    coverage: Optional[IsoResponse]
-    polygons_geojson: Dict[str, Any]
+class IsochroneResult(BaseModel):
+    """Single isochrone result"""
+
+    centroid_id: str
+    geojson: Dict[str, Any]
 
 
-# ---------- FastAPI app ----------
-app = FastAPI(title="Isolysis API", version="0.1.0")
+class IsochroneResponse(BaseModel):
+    """Response with computed isochrones"""
+
+    provider: str
+    results: List[IsochroneResult]
+    total_centroids: int
+    successful_computations: int
+
+
+# ---------- FASTAPI APP ----------
+app = FastAPI(
+    title="Isolysis Isochrone API",
+    version="0.1.0",
+    description="Simple, fast isochrone computation API",
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in prod
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
-@app.post("/isochrones", response_model=IsoServiceResponse)
-def isochrones(req: ComputeRequest):
-    # Key check for external providers
-    missing = _missing_key_for(req.options.provider)
-    if missing:
-        raise HTTPException(status_code=400, detail=missing)
-
-    # Cache key
-    key = _cache_key(
-        req.options.provider,
-        {
-            "centroids": [c.model_dump() for c in req.isorequest.centroids],
-            "n_points": (
-                len(req.isorequest.coordinates) if req.isorequest.coordinates else 0
-            ),
-        },
-    )
-    cached = _cache_get(key)
-    if cached:
-        logger.info("Serving /isochrones from cache")
-        return cached
-
-    # Compute isochrones
-    centroids_payload = [c.model_dump() for c in req.isorequest.centroids]
-    kwargs: Dict[str, Any] = {
-        "provider": req.options.provider,
-        "travel_speed_kph": req.options.travel_speed_kph,
-    }
-    if req.options.interval is not None:
-        kwargs["interval"] = req.options.interval
-    if req.options.profile:
-        kwargs["profile"] = req.options.profile
-    if req.options.denoise is not None:
-        kwargs["denoise"] = req.options.denoise
-    if req.options.generalize is not None:
-        kwargs["generalize"] = req.options.generalize
-
-    isos = compute_isochrones(centroids_payload, **kwargs)
-    if not isos:
-        raise HTTPException(status_code=502, detail="Provider returned no isochrones")
-
-    # Harmonize -> GeoDataFrame
-    gdf = harmonize_isochrones_columns(isos)
-    if gdf.crs is None:
-        gdf.set_crs("EPSG:4326", inplace=True)
-
-    # --- Optional analysis, if coordinates are provided
-    coverage_resp = None
-    if req.isorequest.coordinates:
-        # Convert coordinates into points GeoDataFrame
-        coords_df = pd.DataFrame([c.model_dump() for c in req.isorequest.coordinates])
-        points_gdf = gpd.GeoDataFrame(
-            coords_df,
-            geometry=gpd.points_from_xy(coords_df.lon, coords_df.lat),
-            crs="EPSG:4326",
-        )
-
-        # Coverage + inter-centroid intersections
-        coverage = analyze_isochrone_coverage(gdf, points_gdf)
-        intersections = analyze_isochrone_intersections(gdf, points_gdf)
-        coverage_resp = IsoResponse(
-            total_points=coverage["total_points"],
-            counts=[IsoCounts(**c) for c in coverage["counts"]],
-            intersections=([IsoCounts(**c) for c in intersections] or None),
-            oob_count=coverage["oob_count"],
-            oob_ids=coverage["oob_ids"],
-        )
-
-    # Build service response
-    service_resp = IsoServiceResponse(
-        provider=req.options.provider,
-        interval=req.options.interval,
-        coverage=coverage_resp,
-        polygons_geojson=json.loads(gdf.to_json()),
-    )
-
-    _cache_set(key, service_resp)
-    return service_resp
-
-
+# ---------- ENDPOINTS ----------
 @app.get("/")
-def read_root():
-    return {"message": "Welcome to the Isochrone Service API"}
+def root():
+    """API information"""
+    return {
+        "name": "Isolysis Isochrone API",
+        "version": "0.1.0",
+        "docs": "/docs",
+        "health": "/health",
+    }
 
+
+@app.get("/health")
+def health_check():
+    """Health check with provider availability"""
+    available_providers = []
+    for provider in ["osmnx", "iso4app", "mapbox"]:
+        if not validate_provider_keys(provider):
+            available_providers.append(provider)
+
+    return {
+        "status": "healthy",
+        "available_providers": available_providers,
+        "unavailable_providers": [
+            p for p in ["osmnx", "iso4app", "mapbox"] if p not in available_providers
+        ],
+    }
+
+
+@app.post("/isochrones", response_model=IsochroneResponse)
+def compute_isochrones_endpoint(request: IsochroneRequest):
+    """
+    Compute isochrones for multiple centroids
+
+    Simple, straightforward isochrone computation
+    """
+    provider = request.options.provider
+
+    # Validate provider
+    error_msg = validate_provider_keys(provider)
+    if error_msg:
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    logger.info(
+        f"Computing isochrones for {len(request.centroids)} centroids using {provider}"
+    )
+
+    results = []
+    successful = 0
+
+    # Process each centroid
+    for centroid in request.centroids:
+        centroid_id = centroid.id or f"centroid_{len(results)}"
+
+        try:
+            logger.info(
+                f"Computing isochrone for {centroid_id} at ({centroid.lat}, {centroid.lon})"
+            )
+
+            # Prepare centroid data for your isochrone function
+            centroid_data = {
+                "lat": centroid.lat,
+                "lon": centroid.lon,
+                "rho": centroid.rho,
+                "id": centroid_id,
+            }
+
+            # Prepare computation arguments
+            kwargs = {
+                "provider": provider,
+                "travel_speed_kph": request.options.travel_speed_kph,
+                "num_bands": request.options.num_bands,
+            }
+
+            if request.options.profile:
+                kwargs["profile"] = request.options.profile
+
+            # Compute isochrone using your function
+            isos = compute_isochrones([centroid_data], **kwargs)
+
+            if not isos:
+                logger.warning(f"No isochrones returned for {centroid_id}")
+                continue
+
+            # Convert to GeoDataFrame and then to GeoJSON
+            gdf = harmonize_isochrones_columns(isos)
+            if gdf.crs is None:
+                gdf.set_crs("EPSG:4326", inplace=True)
+
+            geojson = json.loads(gdf.to_json())
+
+            # Add to results
+            results.append(IsochroneResult(centroid_id=centroid_id, geojson=geojson))
+
+            successful += 1
+            logger.success(f"Successfully computed isochrone for {centroid_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to compute isochrone for {centroid_id}: {str(e)}")
+            # Continue with other centroids instead of failing completely
+            continue
+
+    if successful == 0:
+        raise HTTPException(status_code=502, detail="Failed to compute any isochrones")
+
+    logger.info(
+        f"Successfully computed {successful}/{len(request.centroids)} isochrones"
+    )
+
+    return IsochroneResponse(
+        provider=provider,
+        results=results,
+        total_centroids=len(request.centroids),
+        successful_computations=successful,
+    )
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
