@@ -316,7 +316,7 @@ ISO4APP_API_KEY=your_iso4app_key_here
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
 3. Make your changes with comprehensive tests
-4. Ensure code formatting: `uv run black . && uv run isort .`
+4. Ensure code formatting: `uv run black .`
 5. Run the test suite: `uv run pytest tests`
 6. Submit a pull request with clear description
 
