@@ -1,23 +1,24 @@
 import os
 import json
-from typing import Any, Dict, Optional, Literal, List
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 from loguru import logger
 from dotenv import load_dotenv, find_dotenv
 
-import pandas as pd
-import geopandas as gpd
-
 from isolysis.isochrone import compute_isochrones
 from isolysis.utils import harmonize_isochrones_columns
+from isolysis.analysis import analyze_isochrones_with_pois
+from api.schemas import (
+    IsochroneRequest,
+    IsochroneResult,
+    IsochroneResponse,
+    ProviderName,
+)
 
 # ---------- ENV SETUP ----------
 load_dotenv(find_dotenv(usecwd=True), override=True)
-
-ProviderName = Literal["osmnx", "iso4app", "mapbox"]
 
 
 def validate_provider_keys(provider: ProviderName) -> Optional[str]:
@@ -29,53 +30,11 @@ def validate_provider_keys(provider: ProviderName) -> Optional[str]:
     return None
 
 
-# ---------- REQUEST/RESPONSE MODELS ----------
-class CentroidRequest(BaseModel):
-    """Single centroid for isochrone computation"""
-
-    lat: float = Field(..., ge=-90, le=90, description="Latitude")
-    lon: float = Field(..., ge=-180, le=180, description="Longitude")
-    rho: float = Field(..., gt=0, description="Travel time in hours")
-    id: Optional[str] = Field(None, description="Centroid identifier")
-
-
-class ComputeOptions(BaseModel):
-    """Options for isochrone computation"""
-
-    provider: ProviderName = Field("osmnx", description="Routing provider")
-    travel_speed_kph: float = Field(30, gt=0, description="Travel speed km/h")
-    num_bands: int = Field(1, ge=1, le=5, description="Number of time bands (1-5)")
-    profile: Optional[str] = Field("driving", description="Travel profile")
-
-
-class IsochroneRequest(BaseModel):
-    """Request for computing isochrones"""
-
-    centroids: List[CentroidRequest]
-    options: ComputeOptions = Field(default_factory=ComputeOptions)
-
-
-class IsochroneResult(BaseModel):
-    """Single isochrone result"""
-
-    centroid_id: str
-    geojson: Dict[str, Any]
-
-
-class IsochroneResponse(BaseModel):
-    """Response with computed isochrones"""
-
-    provider: str
-    results: List[IsochroneResult]
-    total_centroids: int
-    successful_computations: int
-
-
 # ---------- FASTAPI APP ----------
 app = FastAPI(
     title="Isolysis Isochrone API",
-    version="0.1.0",
-    description="Simple, fast isochrone computation API",
+    version="0.2.0",
+    description="Isochrone computation API with spatial analysis capabilities",
 )
 
 app.add_middleware(
@@ -92,9 +51,14 @@ def root():
     """API information"""
     return {
         "name": "Isolysis Isochrone API",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "docs": "/docs",
         "health": "/health",
+        "features": [
+            "Multi-provider isochrone computation",
+            "Spatial analysis with POIs",
+            "Coverage and intersection analysis",
+        ],
     }
 
 
@@ -118,9 +82,11 @@ def health_check():
 @app.post("/isochrones", response_model=IsochroneResponse)
 def compute_isochrones_endpoint(request: IsochroneRequest):
     """
-    Compute isochrones for multiple centroids
+    Compute isochrones for multiple centroids with optional spatial analysis
 
-    Simple, straightforward isochrone computation
+    - Computes isochrones using specified provider
+    - Optionally analyzes POI coverage and intersections if POIs provided
+    - Returns both geometric data and rich analysis results
     """
     provider = request.options.provider
 
@@ -132,9 +98,12 @@ def compute_isochrones_endpoint(request: IsochroneRequest):
     logger.info(
         f"Computing isochrones for {len(request.centroids)} centroids using {provider}"
     )
+    if request.pois:
+        logger.info(f"POI analysis requested for {len(request.pois)} points")
 
     results = []
     successful = 0
+    all_isochrone_records = []  # Collect for spatial analysis
 
     # Process each centroid
     for centroid in request.centroids:
@@ -145,7 +114,7 @@ def compute_isochrones_endpoint(request: IsochroneRequest):
                 f"Computing isochrone for {centroid_id} at ({centroid.lat}, {centroid.lon})"
             )
 
-            # Prepare centroid data for your isochrone function
+            # Prepare centroid data for isochrone function
             centroid_data = {
                 "lat": centroid.lat,
                 "lon": centroid.lon,
@@ -170,6 +139,9 @@ def compute_isochrones_endpoint(request: IsochroneRequest):
                 logger.warning(f"No isochrones returned for {centroid_id}")
                 continue
 
+            # Store for spatial analysis
+            all_isochrone_records.extend(isos)
+
             # Convert to GeoDataFrame and then to GeoJSON
             gdf = harmonize_isochrones_columns(isos)
             if gdf.crs is None:
@@ -177,8 +149,14 @@ def compute_isochrones_endpoint(request: IsochroneRequest):
 
             geojson = json.loads(gdf.to_json())
 
-            # Add to results
-            results.append(IsochroneResult(centroid_id=centroid_id, geojson=geojson))
+            # Create result
+            results.append(
+                IsochroneResult(
+                    centroid_id=centroid_id,
+                    geojson=geojson,
+                    cached=False,  # Could implement caching logic here
+                )
+            )
 
             successful += 1
             logger.success(f"Successfully computed isochrone for {centroid_id}")
@@ -191,6 +169,32 @@ def compute_isochrones_endpoint(request: IsochroneRequest):
     if successful == 0:
         raise HTTPException(status_code=502, detail="Failed to compute any isochrones")
 
+    # Perform spatial analysis if POIs provided
+    spatial_analysis = None
+    if request.pois and all_isochrone_records:
+        try:
+            logger.info("Computing spatial analysis...")
+            spatial_analysis = analyze_isochrones_with_pois(
+                all_isochrone_records,
+                request.pois,
+                min_overlap=2,  # Configurable parameters
+                max_combinations=100,
+            )
+            logger.success(
+                f"Spatial analysis completed: {spatial_analysis.global_coverage_percentage:.1f}% coverage, "
+                f"{spatial_analysis.intersection_analysis.total_intersections} intersections"
+            )
+        except Exception as e:
+            logger.error(f"Spatial analysis failed: {str(e)}")
+            # Continue without spatial analysis rather than failing
+            spatial_analysis = None
+    elif request.pois and not all_isochrone_records:
+        logger.warning(
+            "POIs provided but no isochrones computed, skipping spatial analysis"
+        )
+    elif not request.pois:
+        logger.debug("No POIs provided, skipping spatial analysis")
+
     logger.info(
         f"Successfully computed {successful}/{len(request.centroids)} isochrones"
     )
@@ -200,7 +204,37 @@ def compute_isochrones_endpoint(request: IsochroneRequest):
         results=results,
         total_centroids=len(request.centroids),
         successful_computations=successful,
+        spatial_analysis=spatial_analysis,
     )
+
+
+@app.get("/providers")
+def list_providers():
+    """List available isochrone providers and their status"""
+    providers_info = {}
+
+    for provider in ["osmnx", "iso4app", "mapbox"]:
+        error = validate_provider_keys(provider)
+        providers_info[provider] = {
+            "available": error is None,
+            "error": error,
+            "features": {
+                "osmnx": [
+                    "Free",
+                    "OpenStreetMap data",
+                    "Global coverage",
+                    "Offline capable",
+                ],
+                "iso4app": [
+                    "European coverage",
+                    "High precision",
+                    "Multiple transport modes",
+                ],
+                "mapbox": ["Global coverage", "Fast computation", "Real traffic data"],
+            }.get(provider, []),
+        }
+
+    return {"providers": providers_info, "default": "osmnx"}
 
 
 if __name__ == "__main__":
