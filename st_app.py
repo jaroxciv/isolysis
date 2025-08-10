@@ -182,6 +182,7 @@ def render_sidebar():
             index=1,
             help="Choose routing engine",
         )
+        st.session_state.provider = provider
 
         # Travel time (rho)
         rho = st.slider(
@@ -192,6 +193,7 @@ def render_sidebar():
             step=0.25,
             help="Maximum travel time from center",
         )
+        st.session_state.rho = rho
 
         # Time band interval
         time_bands = st.slider(
@@ -202,6 +204,7 @@ def render_sidebar():
             step=1,
             help="1 = single polygon, 2+ = multiple equally-spaced bands",
         )
+        st.session_state.time_bands = time_bands
 
         # Colormap selection
         colormap = st.selectbox(
@@ -266,7 +269,11 @@ def process_isochrone_request(center_name, lat, lng, rho, provider, time_bands):
                     st.warning("band_hours not found in feature properties")
                     continue
                 bands_data.append(
-                    {"band_hours": band_hours, "geojson_feature": feature}
+                    {
+                        "band_hours": band_hours,
+                        "band_label": format_time_display(band_hours),
+                        "geojson_feature": feature,
+                    }
                 )
 
             if bands_data:
@@ -354,18 +361,268 @@ def render_center_controls():
                 name in st.session_state.isochrones
                 and "bands" in st.session_state.isochrones[name]
             ):
+                # Sort by actual hours value, then format for display
                 sorted_bands = sorted(
                     st.session_state.isochrones[name]["bands"],
                     key=lambda x: x["band_hours"],
                 )
-                band_times = [
-                    format_time_display(b["band_hours"]) for b in sorted_bands
-                ]
+                # FIXED: Create proper time labels for each band
+                band_times = [b["band_label"] for b in sorted_bands]
                 bands_info = f" - Bands: {', '.join(band_times)}"
 
             st.write(
                 f"**{name}:** {coords['lat']:.5f}, {coords['lng']:.5f}{bands_info}"
             )
+
+
+# -------------------------
+# SPATIAL ANALYSIS FUNCTIONS
+# -------------------------
+def send_analysis_request(provider, rho, time_bands):
+    """Send analysis request with all current centers and uploaded coordinates"""
+    if not st.session_state.centers:
+        return None
+
+    # Prepare centroids from current centers
+    centroids = []
+    for name, coords in st.session_state.centers.items():
+        centroids.append(
+            {"lat": coords["lat"], "lon": coords["lng"], "rho": rho, "id": name}
+        )
+
+    # Prepare POIs from uploaded coordinates
+    pois = []
+    if hasattr(st.session_state, "uploaded_coordinates"):
+        for coord in st.session_state.uploaded_coordinates:
+            pois.append(
+                {
+                    "id": coord.id,
+                    "lat": coord.lat,
+                    "lon": coord.lon,
+                    "name": coord.name,
+                    "region": coord.region,
+                    "municipality": coord.municipality,
+                }
+            )
+
+    payload = {
+        "centroids": centroids,
+        "options": {
+            "provider": provider,
+            "travel_speed_kph": 25,
+            "num_bands": time_bands,
+        },
+        "pois": pois if pois else None,
+    }
+
+    return call_api(API_URL, payload)
+
+
+def render_analysis_summary(analysis):
+    """Render high-level analysis summary"""
+    st.subheader("📊 Analysis Summary")
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    with col1:
+        st.metric(
+            "Total POIs",
+            analysis["total_pois"],
+            help="Total points of interest analyzed",
+        )
+
+    with col2:
+        coverage = analysis["global_coverage_percentage"]
+        st.metric(
+            "Coverage",
+            f"{coverage:.1f}%",
+            help="Percentage of POIs covered by at least one isochrone",
+        )
+
+    with col3:
+        intersections = analysis["intersection_analysis"]["total_intersections"]
+        st.metric(
+            "Intersections",
+            intersections,
+            help="Number of overlapping areas between different centers",
+        )
+
+    with col4:
+        total_pois = analysis["total_pois"]
+        oob_count = analysis["oob_analysis"]["total_oob_pois"]
+        covered_count = total_pois - oob_count
+        st.metric(
+            "Covered",
+            covered_count,
+            help="POIs covered by at least one isochrone",
+        )
+
+    with col5:
+        oob_count = analysis["oob_analysis"]["total_oob_pois"]
+        st.metric(
+            "Uncovered",
+            oob_count,
+            delta=f"-{analysis['oob_analysis']['oob_percentage']:.1f}%",
+            delta_color="inverse",
+            help="POIs outside all coverage areas",
+        )
+
+
+def render_coverage_analysis(coverage_analysis):
+    """Render coverage analysis per center"""
+    st.subheader("🎯 Coverage by Center")
+
+    for centroid_coverage in coverage_analysis:
+        center_id = centroid_coverage["centroid_id"]
+        total_pois = centroid_coverage["total_unique_pois"]
+
+        with st.expander(f"📍 {center_id} - {total_pois} POIs covered"):
+            # Show bands in a clean table
+            band_data = []
+            for band in centroid_coverage["bands"]:
+                band_data.append(
+                    {
+                        "Time Band": band["band_label"],
+                        "POIs Covered": band["poi_count"],
+                        "Coverage %": f"{band['coverage_percentage']:.1f}%",
+                    }
+                )
+
+            if band_data:
+                st.dataframe(band_data, use_container_width=True, hide_index=True)
+
+            # Best performing band
+            if centroid_coverage["max_coverage_band"]:
+                st.info(f"🏆 Best band: **{centroid_coverage['max_coverage_band']}**")
+
+
+def render_intersection_analysis(intersection_analysis):
+    """Render intersection analysis"""
+    if intersection_analysis["total_intersections"] == 0:
+        st.info("ℹ️ No intersections found between centers")
+        return
+
+    st.subheader("🔄 Intersection Analysis")
+
+    # Pairwise intersections
+    pairwise = intersection_analysis["pairwise_intersections"]
+    if pairwise:
+        st.write("**2-way Overlaps:**")
+
+        # Sort by POI count for better presentation
+        sorted_pairwise = sorted(pairwise, key=lambda x: x["poi_count"], reverse=True)
+
+        for intersection in sorted_pairwise[:5]:  # Show top 5
+            label = intersection["intersection_label"]
+            poi_count = intersection["poi_count"]
+
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.write(f"• {label}")
+            with col2:
+                st.code(f"{poi_count} POIs")
+
+        if len(pairwise) > 5:
+            st.caption(f"... and {len(pairwise) - 5} more intersections")
+
+    # Multi-way intersections
+    multiway = intersection_analysis["multiway_intersections"]
+    if multiway:
+        st.write("**Multi-way Overlaps:**")
+        for intersection in multiway:
+            label = intersection["intersection_label"]
+            poi_count = intersection["poi_count"]
+            overlap_type = intersection["overlap_type"]
+
+            st.write(f"• {label} ({overlap_type}) - **{poi_count} POIs**")
+
+
+def render_out_of_band_analysis(oob_analysis):
+    """Render out-of-band analysis"""
+    if oob_analysis["total_oob_pois"] == 0:
+        st.success("🎉 All POIs are covered by at least one center!")
+        return
+
+    st.subheader("🚫 Uncovered Areas")
+
+    oob_count = oob_analysis["total_oob_pois"]
+    oob_percentage = oob_analysis["oob_percentage"]
+
+    st.warning(
+        f"⚠️ {oob_count} POIs ({oob_percentage:.1f}%) are not covered by any center"
+    )
+
+    # Show some uncovered POI IDs
+    oob_ids = oob_analysis["oob_poi_ids"]
+    if len(oob_ids) <= 10:
+        st.write("**Uncovered POIs:**", ", ".join(oob_ids))
+    else:
+        st.write(
+            f"**Uncovered POIs:** {', '.join(oob_ids[:10])}, ... and {len(oob_ids) - 10} more"
+        )
+
+
+def render_spatial_analysis_panel():
+    """Render the complete spatial analysis panel"""
+    # Only show if we have both centers and uploaded coordinates
+    if not st.session_state.centers or not hasattr(
+        st.session_state, "uploaded_coordinates"
+    ):
+        return
+
+    st.markdown("---")
+    st.header("🧮 Spatial Analysis")
+
+    # Get current settings
+    provider = st.session_state.get("provider", "osmnx")
+    rho = st.session_state.get("rho", 1.0)
+    time_bands = st.session_state.get("time_bands", 1)
+
+    col1, col2 = st.columns([1, 3])
+
+    with col1:
+        if st.button("🔍 Analyze Coverage", type="primary", use_container_width=True):
+            with st.spinner("Computing spatial analysis..."):
+                try:
+                    result = send_analysis_request(provider, rho, time_bands)
+
+                    if (
+                        result
+                        and "spatial_analysis" in result
+                        and result["spatial_analysis"]
+                    ):
+                        st.session_state.analysis_result = result["spatial_analysis"]
+                        st.success("✅ Analysis complete!")
+                    else:
+                        st.error("❌ Analysis failed - no POI data in response")
+
+                except Exception as e:
+                    st.error(f"❌ Analysis failed: {str(e)}")
+
+    with col2:
+        st.caption(
+            f"Analyze {len(st.session_state.centers)} centers "
+            f"against {len(st.session_state.uploaded_coordinates)} POIs"
+        )
+
+    # Show analysis results if available
+    if hasattr(st.session_state, "analysis_result"):
+        analysis = st.session_state.analysis_result
+
+        # Summary metrics
+        render_analysis_summary(analysis)
+
+        # Detailed analysis in tabs
+        tab1, tab2, tab3 = st.tabs(["🎯 Coverage", "🔄 Intersections", "🚫 Uncovered"])
+
+        with tab1:
+            render_coverage_analysis(analysis["coverage_analysis"])
+
+        with tab2:
+            render_intersection_analysis(analysis["intersection_analysis"])
+
+        with tab3:
+            render_out_of_band_analysis(analysis["oob_analysis"])
 
 
 # -------------------------
@@ -394,6 +651,9 @@ def main():
 
     # Render controls
     render_center_controls()
+
+    # Render spatial analysis panel
+    render_spatial_analysis_panel()
 
 
 if __name__ == "__main__":
