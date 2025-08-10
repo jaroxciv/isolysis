@@ -23,7 +23,9 @@ class Centroid(BaseModel):
 
 
 class IsoRequest(BaseModel):
-    coordinates: Optional[List[Coordinate]] = Field(None, description="Points to be analyzed")
+    coordinates: Optional[List[Coordinate]] = Field(
+        None, description="Points to be analyzed"
+    )
     centroids: List[Centroid] = Field(..., description="Isochrone centers")
 
     @field_validator("centroids")
