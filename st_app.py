@@ -5,19 +5,29 @@ import streamlit as st
 from dotenv import find_dotenv, load_dotenv
 from streamlit_folium import st_folium
 
-from api.utils import (add_coordinates_to_map, call_api, format_time_display,
-                       get_band_color, get_coordinates_center, get_map_center,
-                       get_pos, handle_coordinate_upload)
+from api.utils import (
+    add_coordinates_to_map,
+    call_api,
+    format_time_display,
+    get_band_color,
+    get_coordinates_center,
+    get_map_center,
+    get_pos,
+    handle_coordinate_upload,
+)
 
 # -------------------------
 # ENV + CONFIG
 # -------------------------
-load_dotenv(find_dotenv(usecwd=True), override=True)
+# Keep Docker env vars if present, don't override with .env file
+load_dotenv(find_dotenv(usecwd=True), override=False)
 
 MAPBOX_API_KEY = os.getenv("MAPBOX_API_KEY")
 ISO4APP_API_KEY = os.getenv("ISO4APP_API_KEY")
-API_URL = "http://localhost:8000/isochrones"
 
+# Use Docker's service name in container, localhost in local dev
+API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
+ISOCHRONES_ENDPOINT = f"{API_URL}/isochrones"
 
 # Page config
 st.set_page_config(page_title="🗺️ Simple Isochrone Map", layout="wide")
@@ -162,6 +172,18 @@ def handle_coordinate_upload_sidebar():
                 coord_center = get_coordinates_center(coordinates)
                 st.session_state.coord_center = coord_center
 
+    # 🔹 Add remove button if we have uploaded coordinates
+    if (
+        hasattr(st.session_state, "uploaded_coordinates")
+        and st.session_state.uploaded_coordinates
+    ):
+        if st.button("🗑️ Remove Uploaded Coordinates"):
+            del st.session_state.uploaded_coordinates
+            if hasattr(st.session_state, "coord_center"):
+                del st.session_state.coord_center
+            st.success("✅ Uploaded coordinates removed")
+            st.rerun()
+
 
 def render_sidebar():
     """Render complete sidebar"""
@@ -246,7 +268,7 @@ def process_isochrone_request(center_name, lat, lng, rho, provider, time_bands):
         },
     }
 
-    result = call_api(API_URL, payload)
+    result = call_api(ISOCHRONES_ENDPOINT, payload)
 
     if result and "results" in result and len(result["results"]) > 0:
         first_result = result["results"][0]
@@ -408,7 +430,7 @@ def send_analysis_request(provider, rho, time_bands):
         "pois": pois if pois else None,
     }
 
-    return call_api(API_URL, payload)
+    return call_api(ISOCHRONES_ENDPOINT, payload)
 
 
 def render_analysis_summary(analysis):

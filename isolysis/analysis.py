@@ -7,9 +7,15 @@ import pandas as pd
 from loguru import logger
 from shapely.geometry import Point
 
-from api.schemas import (POI, BandCoverage, BandIntersection, CentroidCoverage,
-                         IntersectionMatrix, OutOfBandAnalysis,
-                         SpatialAnalysisResult)
+from api.schemas import (
+    POI,
+    BandCoverage,
+    BandIntersection,
+    CentroidCoverage,
+    IntersectionMatrix,
+    OutOfBandAnalysis,
+    SpatialAnalysisResult,
+)
 
 
 def format_time_display(hours: float) -> str:

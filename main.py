@@ -7,10 +7,11 @@ import osmnx as ox
 import pandas as pd
 from loguru import logger
 
-from isolysis.analysis import (analyze_isochrone_coverage,
-                               analyze_isochrone_intersections)
-from isolysis.io import (Centroid, Coordinate, IsoCounts, IsoRequest,
-                         IsoResponse)
+from isolysis.analysis import (
+    analyze_isochrone_coverage,
+    analyze_isochrone_intersections,
+)
+from isolysis.io import Centroid, Coordinate, IsoCounts, IsoRequest, IsoResponse
 from isolysis.isochrone import compute_isochrones
 from isolysis.utils import harmonize_isochrones_columns, log_timing
 

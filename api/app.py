@@ -7,8 +7,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from api.schemas import (IsochroneRequest, IsochroneResponse, IsochroneResult,
-                         ProviderName)
+from api.schemas import (
+    IsochroneRequest,
+    IsochroneResponse,
+    IsochroneResult,
+    ProviderName,
+)
 from isolysis.analysis import analyze_isochrones_with_pois
 from isolysis.isochrone import compute_isochrones
 from isolysis.utils import harmonize_isochrones_columns

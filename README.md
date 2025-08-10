@@ -289,7 +289,7 @@ ISO4APP_API_KEY=your_iso4app_key_here
 
 1. Install development dependencies:
    ```sh
-   uv add --dev pytest pytest-cov black isort mypy
+   uv add --dev pytest pytest-cov black
    ```
 
 2. Run tests:
@@ -299,7 +299,7 @@ ISO4APP_API_KEY=your_iso4app_key_here
 
 3. Format code:
    ```sh
-   uv run black . && uv run isort .
+   uv run black .
    ```
 
 ### Architecture Principles

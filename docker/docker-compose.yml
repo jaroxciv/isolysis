@@ -1,0 +1,44 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: api
+    container_name: isolysis-api
+    ports:
+      - "8000:8000"
+    environment:
+      - MAPBOX_API_KEY=${MAPBOX_API_KEY:-}
+      - ISO4APP_API_KEY=${ISO4APP_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - isolysis-network
+
+  streamlit:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: streamlit
+    container_name: isolysis-streamlit
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+      - MAPBOX_API_KEY=${MAPBOX_API_KEY:-}
+      - ISO4APP_API_KEY=${ISO4APP_API_KEY:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - isolysis-network
+
+networks:
+  isolysis-network:
+    driver: bridge
