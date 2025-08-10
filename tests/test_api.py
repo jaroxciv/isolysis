@@ -1,6 +1,7 @@
+import json
+
 import pytest
 import requests
-import json
 from loguru import logger
 
 

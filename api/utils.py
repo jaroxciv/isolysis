@@ -1,8 +1,10 @@
 import json
-import requests
+from typing import Dict, List, Optional, Tuple
+
 import folium as fl
+import requests
 import streamlit as st
-from typing import Dict, Optional, List, Tuple
+
 from isolysis.io import Coordinate
 
 
@@ -53,8 +55,8 @@ def get_band_color(
     band_index: int, total_bands: int, colormap: str = "viridis"
 ) -> tuple:
     """Get a color for the band based on its index using matplotlib colormaps"""
-    import matplotlib.pyplot as plt
     import matplotlib.colors as mcolors
+    import matplotlib.pyplot as plt
 
     # Get the colormap
     try:

@@ -1,7 +1,8 @@
-import pytest
-from pathlib import Path
-from loguru import logger
 import sys
+from pathlib import Path
+
+import pytest
+from loguru import logger
 
 # Configure loguru for tests
 logger.remove()

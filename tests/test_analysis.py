@@ -1,15 +1,11 @@
-import pytest
 import geopandas as gpd
-from shapely.geometry import Point, Polygon
+import pytest
 from loguru import logger
+from shapely.geometry import Point, Polygon
 
-from isolysis.analysis import (
-    compute_band_coverage,
-    compute_spatial_analysis,
-    pois_to_geodataframe,
-    format_time_display,
-)
 from api.schemas import POI
+from isolysis.analysis import (compute_band_coverage, compute_spatial_analysis,
+                               format_time_display, pois_to_geodataframe)
 
 
 @pytest.fixture

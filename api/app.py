@@ -1,21 +1,17 @@
-import os
 import json
+import os
 from typing import Optional
 
+from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
-from dotenv import load_dotenv, find_dotenv
 
+from api.schemas import (IsochroneRequest, IsochroneResponse, IsochroneResult,
+                         ProviderName)
+from isolysis.analysis import analyze_isochrones_with_pois
 from isolysis.isochrone import compute_isochrones
 from isolysis.utils import harmonize_isochrones_columns
-from isolysis.analysis import analyze_isochrones_with_pois
-from api.schemas import (
-    IsochroneRequest,
-    IsochroneResult,
-    IsochroneResponse,
-    ProviderName,
-)
 
 # ---------- ENV SETUP ----------
 load_dotenv(find_dotenv(usecwd=True), override=True)

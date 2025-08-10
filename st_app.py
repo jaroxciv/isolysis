@@ -1,20 +1,13 @@
 import os
+
 import folium as fl
 import streamlit as st
+from dotenv import find_dotenv, load_dotenv
 from streamlit_folium import st_folium
-from dotenv import load_dotenv, find_dotenv
 
-from api.utils import (
-    get_map_center,
-    add_coordinates_to_map,
-    format_time_display,
-    get_band_color,
-    get_pos,
-    call_api,
-    handle_coordinate_upload,
-    get_coordinates_center,
-)
-
+from api.utils import (add_coordinates_to_map, call_api, format_time_display,
+                       get_band_color, get_coordinates_center, get_map_center,
+                       get_pos, handle_coordinate_upload)
 
 # -------------------------
 # ENV + CONFIG

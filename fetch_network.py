@@ -1,7 +1,8 @@
 # fetch_network.py
 
-import osmnx as ox
 import sys
+
+import osmnx as ox
 from loguru import logger
 
 
