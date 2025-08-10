@@ -13,13 +13,34 @@ from abc import ABC, abstractmethod
 load_dotenv()
 
 
-def generate_time_bands(max_rho: float, interval: float = 0.5) -> List[float]:
-    n_bands = int(max_rho / interval)
-    bands = [round(i * interval, 2) for i in range(1, n_bands + 1)]
-    if bands and bands[-1] < max_rho:
-        bands.append(round(max_rho, 2))
-    elif not bands:
-        bands = [round(max_rho, 2)]
+def generate_time_bands(max_rho: float, num_bands: int = 1) -> List[float]:
+    """
+    Generate equally spaced time bands
+
+    Args:
+        max_rho: Maximum travel time in hours
+        num_bands: Number of time bands (1-5)
+        1 = single isochrone at max_rho
+        2 = bands at 0.5*rho, 1.0*rho
+        3 = bands at 0.33*rho, 0.67*rho, 1.0*rho
+        etc.
+
+    Returns:
+        List of time values in hours
+    """
+    if num_bands <= 1:
+        # Single isochrone at max time
+        return [max_rho]
+
+    # Clamp to sensible range
+    num_bands = min(max(num_bands, 1), 5)
+
+    # Generate equally spaced bands from rho/num_bands to rho
+    bands = []
+    for i in range(1, num_bands + 1):
+        band_time = (i / num_bands) * max_rho
+        bands.append(round(band_time, 2))
+
     return bands
 
 
@@ -52,7 +73,7 @@ class OsmnxIsochroneProvider(IsochroneProvider):
         centroids: List[Dict[str, Any]],
         travel_speed_kph: float = 30,
         network_type: str = "drive",
-        interval: Optional[float] = None,
+        num_bands: int = 1,
         project_utm: bool = False,
         G: Optional[nx.MultiDiGraph] = None,
         max_dist_buffer: float = 1.1,
@@ -65,8 +86,7 @@ class OsmnxIsochroneProvider(IsochroneProvider):
         for c in centroids:
             lon, lat = float(c["lon"]), float(c["lat"])
             max_rho = float(c.get("rho", 1.0))
-            current_interval = interval if interval is not None else (max_rho / 4.0)
-            bands = generate_time_bands(max_rho, current_interval)
+            bands = generate_time_bands(max_rho, num_bands)
             max_dist_m = travel_speed_kph * max_rho * 1000 * max_dist_buffer
 
             # Prepare local graph
@@ -157,7 +177,7 @@ class Iso4AppIsochroneProvider(IsochroneProvider):
         centroids: List[Dict[str, Any]],
         value_type: str = "isochrone",
         travel_type: str = "motor_vehicle",
-        interval: float = 1.0,
+        num_bands: int = 1,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         isochrones = []
@@ -166,21 +186,18 @@ class Iso4AppIsochroneProvider(IsochroneProvider):
             lon = c["lon"]
             centroid_id = c.get("id", "unknown")
             rho = c.get("rho", 1.0)
-            max_secs = int(float(rho) * 3600)
-            bands = [
-                int(t * 3600)
-                for t in [i * interval for i in range(1, int(rho / interval) + 1)]
-            ]
-            if not bands:
-                bands = [max_secs]
+
+            # Generate time bands in seconds
+            bands_hours = generate_time_bands(rho, num_bands)
+            bands_secs = [int(b * 3600) for b in bands_hours]
 
             # General info: which bands, etc.
             logger.info(
                 f"Iso4App: Requesting isochrones for id={centroid_id}, "
-                f"bands={[b // 60 for b in bands]} min, travel_type={travel_type}"
+                f"bands={[b // 60 for b in bands_secs]} min, travel_type={travel_type}"
             )
 
-            for band_secs in bands:
+            for band_secs in bands_secs:
                 params = {
                     "licKey": self.api_key,
                     "type": value_type,
@@ -207,7 +224,7 @@ class Iso4AppIsochroneProvider(IsochroneProvider):
                     if poly is not None:
                         isochrones.append(
                             {
-                                "id": centroid_id,
+                                "centroid_id": centroid_id,
                                 "band_hours": band_secs / 3600,
                                 "geometry": poly,
                             }
@@ -235,7 +252,7 @@ class MapboxIsochroneProvider(IsochroneProvider):
     def compute(
         self,
         centroids: List[Dict[str, Any]],
-        interval: float = 0.25,  # in hours
+        num_bands: int = 1,
         profile: str = "driving",
         **kwargs,
     ) -> List[Dict[str, Any]]:
@@ -245,8 +262,10 @@ class MapboxIsochroneProvider(IsochroneProvider):
             lon = c["lon"]
             centroid_id = c.get("id", "unknown")
             rho = c.get("rho", 1.0)
-            bands_hours = generate_time_bands(rho, interval)
+
+            bands_hours = generate_time_bands(rho, num_bands)
             bands_minutes = [int(b * 60) for b in bands_hours]
+
             logger.info(
                 f"Mapbox: Requesting isochrones for id={centroid_id}, "
                 f"bands={bands_minutes} min, profile={profile}, location=({lat}, {lon})"
@@ -276,7 +295,7 @@ class MapboxIsochroneProvider(IsochroneProvider):
                         poly = shape(feat["geometry"])
                         isochrones.append(
                             {
-                                "id": centroid_id,
+                                "centroid_id": centroid_id,
                                 "band_hours": band_h,
                                 "geometry": poly,
                             }
