@@ -1,3 +1,4 @@
+import uuid
 import json
 from typing import Dict, List, Optional, Tuple
 
@@ -91,20 +92,42 @@ def handle_coordinate_upload(uploaded_file) -> Optional[List[Coordinate]]:
     """
     Process uploaded JSON file and return list of Coordinate objects.
 
-    Args:
-        uploaded_file: Streamlit uploaded file object
-
-    Returns:
-        List of Coordinate objects or None if error
+    - Cast lat/lon to float if needed
+    - Normalize lng → lon
+    - Ensure each POI has an id
+    - Preserve extra fields (e.g. department, unit_sis) in metadata
     """
     try:
         # Read and parse JSON
         content = uploaded_file.read()
         data = json.loads(content)
 
-        # Convert to Coordinate objects
-        coordinates = [Coordinate(**item) for item in data]
+        normalized = []
+        for item in data:
+            # Normalize coordinates
+            if "lat" in item:
+                item["lat"] = float(item["lat"])
+            if "lon" in item:
+                item["lon"] = float(item["lon"])
+            if "lng" in item and "lon" not in item:
+                item["lon"] = float(item.pop("lng"))
 
+            # Ensure id
+            if "id" not in item:
+                item["id"] = str(uuid.uuid4())
+
+            # Optional: fold unknown keys into metadata
+            metadata = {
+                k: v
+                for k, v in item.items()
+                if k not in ["id", "lat", "lon", "name", "region", "municipality"]
+            }
+            if metadata:
+                item["metadata"] = metadata
+
+            normalized.append(item)
+
+        coordinates = [Coordinate(**item) for item in normalized]
         return coordinates
 
     except json.JSONDecodeError:
