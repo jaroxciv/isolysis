@@ -132,6 +132,16 @@ def compute_isochrones_endpoint(request: IsochroneRequest):
             if request.options.profile:
                 kwargs["profile"] = request.options.profile
 
+            # --- Iso4App specific parameters ---
+            kwargs.update(
+                {
+                    "value_type": request.options.iso4app_type,
+                    "travel_type": request.options.iso4app_mobility,
+                    "speed_type": request.options.iso4app_speed_type,
+                    "speed_limit": request.options.iso4app_speed_limit,
+                }
+            )
+
             # Compute isochrone using your function
             isos = compute_isochrones([centroid_data], **kwargs)
 
