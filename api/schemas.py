@@ -21,8 +21,27 @@ class ComputeOptions(BaseModel):
 
     provider: ProviderName = Field("osmnx", description="Routing provider")
     travel_speed_kph: float = Field(30, gt=0, description="Travel speed km/h")
-    num_bands: int = Field(1, ge=1, le=5, description="Number of time bands (1-5)")
+    num_bands: int = Field(
+        1, ge=1, le=1, description="Number of time bands (Fixed to 1)"
+    )
     profile: Optional[str] = Field("driving", description="Travel profile")
+
+    # --- Iso4App specific ---
+    iso4app_type: Optional[str] = Field(
+        "isochrone", description="Iso4App isoline type: isochrone or isodistance"
+    )
+    iso4app_mobility: Optional[str] = Field(
+        "motor_vehicle",
+        description="Iso4App mobility: motor_vehicle, bicycle, pedestrian",
+    )
+    iso4app_speed_type: Optional[str] = Field(
+        "normal", description="Iso4App speed type: very_low, low, normal, fast"
+    )
+    iso4app_speed_limit: Optional[float] = Field(
+        None,
+        gt=0,
+        description="Iso4App maximum speed (km/h) used only for isochrone type",
+    )
 
 
 class IsochroneRequest(BaseModel):
