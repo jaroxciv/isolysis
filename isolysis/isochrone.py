@@ -178,69 +178,101 @@ class Iso4AppIsochroneProvider(IsochroneProvider):
         centroids: List[Dict[str, Any]],
         value_type: str = "isochrone",
         travel_type: str = "motor_vehicle",
+        speed_type: str = "normal",
         num_bands: int = 1,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         isochrones = []
         for c in centroids:
-            lat = c["lat"]
-            lon = c["lon"]
+            lat = float(c["lat"])
+            lon = float(c["lon"])
             centroid_id = c.get("id", "unknown")
-            rho = c.get("rho", 1.0)
+            rho = float(c.get("rho", 1.0))
 
-            # Generate time bands in seconds
+            # Generate time or distance bands
             bands_hours = generate_time_bands(rho, num_bands)
-            bands_secs = [int(b * 3600) for b in bands_hours]
+            if value_type == "isochrone":
+                band_values = [int(b * 3600) for b in bands_hours]  # seconds
+                unit = "min"
+            else:
+                band_values = [int(b * 1000) for b in bands_hours]  # meters
+                unit = "m"
 
-            # General info: which bands, etc.
+            display_values = [
+                b // 60 if value_type == "isochrone" else b for b in band_values
+            ]
             logger.info(
-                f"Iso4App: Requesting isochrones for id={centroid_id}, "
-                f"bands={[b // 60 for b in bands_secs]} min, travel_type={travel_type}"
+                f"Iso4App: Requesting {value_type}s for id={centroid_id}, "
+                f"bands={display_values} {unit}, "
+                f"travel_type={travel_type}"
             )
 
-            for band_secs in bands_secs:
+            for band_value in band_values:
+                # Unified value for display and logging
+                display_value = (
+                    band_value // 60 if value_type == "isochrone" else band_value
+                )
+
+                # Base parameters
                 params = {
                     "licKey": self.api_key,
                     "type": value_type,
-                    "value": band_secs,
+                    "value": band_value,
                     "lat": lat,
                     "lng": lon,
                     "mobility": travel_type,
+                    "speedType": speed_type,
                     "format": "geojson",
                 }
+
+                # Optional speed limit (only for isochrone type)
+                speed_limit = kwargs.get("speed_limit")
+                if speed_limit and value_type == "isochrone":
+                    params["speedLimit"] = float(speed_limit)
+
                 try:
                     response = requests.get(self.BASE_URL, params=params)
                     if response.status_code != 200:
                         logger.error(
-                            f"Iso4App [{centroid_id} {band_secs // 60}min]: "
+                            f"Iso4App [{centroid_id} {display_value}{unit}]: "
                             f"API error {response.status_code}, {response.text}"
                         )
                         continue
+
                     geojson = response.json()
                     poly = None
                     for feat in geojson.get("features", []):
                         if feat["geometry"]["type"] in ["Polygon", "MultiPolygon"]:
                             poly = shape(feat["geometry"])
                             break
+
                     if poly is not None:
                         isochrones.append(
                             {
                                 "centroid_id": centroid_id,
-                                "band_hours": band_secs / 3600,
+                                "band_hours": (
+                                    band_value / 3600
+                                    if value_type == "isochrone"
+                                    else rho
+                                ),
                                 "geometry": poly,
                             }
                         )
                         logger.success(
-                            f"Iso4App: Isochrone band {band_secs // 60}min generated for id={centroid_id}"
+                            f"Iso4App: {value_type.title()} band {display_value}{unit} "
+                            f"generated for id={centroid_id}"
                         )
                     else:
                         logger.warning(
-                            f"Iso4App: No isochrone geometry for id={centroid_id}, band={band_secs // 60}min"
+                            f"Iso4App: No geometry returned for id={centroid_id}, "
+                            f"band={display_value}{unit}"
                         )
+
                 except Exception as e:
                     logger.error(
-                        f"Iso4App: Exception for id={centroid_id}, band={band_secs // 60}min: {e}"
+                        f"Iso4App: Exception for id={centroid_id}, band={display_value}{unit}: {e}"
                     )
+
         return isochrones
 
 
