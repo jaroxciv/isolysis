@@ -192,7 +192,8 @@ def compute_isochrones_endpoint(request: IsochroneRequest):
             )
             logger.success(
                 f"Spatial analysis completed: {spatial_analysis.global_coverage_percentage:.1f}% coverage, "
-                f"{spatial_analysis.intersection_analysis.total_intersections} intersections"
+                f"{spatial_analysis.intersection_analysis.total_intersections} intersections, "
+                f"Network Optimisation Index computed: {spatial_analysis.network_optimization_index:.3f}"
             )
         except Exception as e:
             logger.error(f"Spatial analysis failed: {str(e)}")
