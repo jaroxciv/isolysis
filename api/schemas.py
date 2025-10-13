@@ -182,6 +182,11 @@ class SpatialAnalysisResult(BaseModel):
         ..., description="Total number of bands across all centroids"
     )
 
+    # Network Optimisation
+    network_optimization_index: Optional[float] = Field(
+        None, description="Network Optimization Index (NOI) = (X - Y - Z) / total_pois"
+    )
+
     # Coverage analysis
     coverage_analysis: List[CentroidCoverage] = Field(
         ..., description="Coverage per centroid"
