@@ -322,6 +322,61 @@ def compute_out_of_band_analysis(
     )
 
 
+def compute_network_optimisation_index(
+    centroid_coverages: List[CentroidCoverage],
+    intersection_matrix: IntersectionMatrix,
+    oob_analysis: OutOfBandAnalysis,
+    total_pois: int,
+) -> float:
+    """
+    Compute the Network Optimisation Index (NOI):
+
+    (X - Y - Z) / total_pois
+        X = total POIs within 1+ isochrones (sum of unique per centroid)
+        Y = total POIs in intersections (multi-coverage)
+        Z = total POIs outside all isochrones
+    Returns 0 if total_pois = 0.
+
+    Theoretical range: [-1, 1]
+        +1 → perfectly efficient network (all covered, no overlap)
+        -1 → totally inefficient (no coverage)
+    """
+    try:
+        # X: total POIs within 1+ isochrones (sum of unique per centroid)
+        X = sum(c.total_unique_pois for c in centroid_coverages)
+
+        # Y: total POIs that appear in intersection (multi-coverage)
+        # Use unique POI IDs across all pairwise and multi-way intersections
+        intersection_poi_ids = set()
+        for inter in (
+            intersection_matrix.pairwise_intersections
+            + intersection_matrix.multiway_intersections
+        ):
+            intersection_poi_ids.update(inter.poi_ids)
+        Y = len(intersection_poi_ids)
+
+        # Z: total POIs outside all isochrones
+        Z = oob_analysis.total_oob_pois
+
+        # Avoid division by zero
+        total = total_pois or 0
+        if total == 0:
+            return 0.0
+
+        # Compute normalized index
+        noi = (X - Y - Z) / total
+
+        # Clamp NOI within theoretical range [-1, 1] for robustness
+        noi = max(-1.0, min(1.0, noi))
+
+        logger.info(f"Computed Network Optimisation Index (NOI): {noi:.4f}")
+        return noi
+
+    except Exception as e:
+        logger.error(f"Failed to compute Network Optimisation Index: {e}")
+        return 0.0
+
+
 def compute_spatial_analysis(
     isochrones_gdf: gpd.GeoDataFrame,
     pois: List[POI],
@@ -349,6 +404,7 @@ def compute_spatial_analysis(
                 else 0
             ),
             total_bands=len(isochrones_gdf),
+            network_optimization_index=0.0,
             coverage_analysis=[],
             intersection_analysis=IntersectionMatrix(
                 total_intersections=0,
@@ -382,6 +438,15 @@ def compute_spatial_analysis(
     logger.debug("Computing out-of-band analysis...")
     oob_analysis = compute_out_of_band_analysis(isochrones_gdf, pois_gdf)
 
+    # Compute Network Optimisation Index
+    logger.debug("Computing network optimisation index...")
+    network_optimization_index = compute_network_optimisation_index(
+        centroid_coverages=centroid_coverages,
+        intersection_matrix=intersection_matrix,
+        oob_analysis=oob_analysis,
+        total_pois=len(pois),
+    )
+
     # Calculate global statistics
     all_covered_poi_ids = set()
     for coverage in centroid_coverages:
@@ -400,7 +465,8 @@ def compute_spatial_analysis(
 
     logger.success(
         f"Spatial analysis complete: {global_coverage_percentage:.1f}% global coverage, "
-        f"{intersection_matrix.total_intersections} intersections"
+        f"{intersection_matrix.total_intersections} intersections, "
+        f"NOI computed: {network_optimization_index:.4f}"
     )
 
     return SpatialAnalysisResult(
@@ -411,6 +477,7 @@ def compute_spatial_analysis(
             else 0
         ),
         total_bands=len(isochrones_gdf),
+        network_optimization_index=network_optimization_index,
         coverage_analysis=centroid_coverages,
         intersection_analysis=intersection_matrix,
         oob_analysis=oob_analysis,
