@@ -96,41 +96,36 @@ def build_feature_group():
 
     # Add isochrones
     for center_name, isochrone_data in st.session_state.isochrones.items():
-        if "bands" in isochrone_data:
-            total_bands = len(isochrone_data["bands"])
-            sorted_bands = sorted(
-                isochrone_data["bands"], key=lambda x: x["band_hours"], reverse=True
+        if "bands" in isochrone_data and isochrone_data["bands"]:
+            band_data = isochrone_data["bands"][0]  # single polygon only
+            band_hours = band_data["band_hours"]
+            geojson_feature = band_data["geojson_feature"]
+            time_display = format_time_display(band_hours)
+            tooltip_text = f"{center_name} - {time_display} travel area"
+            popup_text = (
+                f"{center_name}<br>Travel time: {time_display}<br>Band: {band_hours}h"
             )
 
-            for band_index, band_data in enumerate(sorted_bands):
-                band_hours = band_data["band_hours"]
-                geojson_feature = band_data["geojson_feature"]
-                time_display = format_time_display(band_hours)
-                tooltip_text = f"{center_name} - {time_display} travel area"
-                popup_text = f"{center_name}<br>Travel time: {time_display}<br>Band: {band_hours}h"
+            # Single color (middle of colormap)
+            colormap = st.session_state.get("colormap", "viridis")
+            fill_color, border_color = get_band_color(0, 1, colormap)
 
-                # Get colors - need to access colormap from session state
-                colormap = st.session_state.get("colormap", "viridis")
-                fill_color, border_color = get_band_color(
-                    band_index, total_bands, colormap
+            style_func = lambda x, fill=fill_color, border=border_color: {
+                "fillColor": fill,
+                "color": border,
+                "weight": 2,
+                "fillOpacity": 0.4,
+                "opacity": 0.8,
+            }
+
+            if geojson_feature["geometry"]["type"] in ["Polygon", "MultiPolygon"]:
+                geojson_layer = fl.GeoJson(
+                    geojson_feature,
+                    style_function=style_func,
+                    popup=popup_text,
+                    tooltip=tooltip_text,
                 )
-
-                style_func = lambda x, fill=fill_color, border=border_color: {
-                    "fillColor": fill,
-                    "color": border,
-                    "weight": 2,
-                    "fillOpacity": 0.4,
-                    "opacity": 0.8,
-                }
-
-                if geojson_feature["geometry"]["type"] in ["Polygon", "MultiPolygon"]:
-                    geojson_layer = fl.GeoJson(
-                        geojson_feature,
-                        style_function=style_func,
-                        popup=popup_text,
-                        tooltip=tooltip_text,
-                    )
-                    fg.add_child(geojson_layer)
+                fg.add_child(geojson_layer)
 
     return fg
 
@@ -194,7 +189,7 @@ def render_sidebar():
         provider = st.selectbox(
             "Provider",
             options=["osmnx", "mapbox", "iso4app"],
-            index=1,
+            index=2,  # default to iso4app since client uses it
             help="Choose routing engine",
         )
         st.session_state.provider = provider
@@ -202,24 +197,45 @@ def render_sidebar():
         # Travel time (rho)
         rho = st.slider(
             "Travel Time (hours)",
-            min_value=0.25,
-            max_value=4.0,
+            min_value=1.0,
+            max_value=10.0,
             value=1.0,
-            step=0.25,
+            step=0.5,
             help="Maximum travel time from center",
         )
         st.session_state.rho = rho
 
-        # Time band interval
-        time_bands = st.slider(
-            "Number of Time Bands",
-            min_value=1,
-            max_value=5,
-            value=1,
-            step=1,
-            help="1 = single polygon, 2+ = multiple equally-spaced bands",
-        )
-        st.session_state.time_bands = time_bands
+        # Iso4App-specific options
+        if provider == "iso4app":
+            iso_type = st.selectbox(
+                "Isoline Type",
+                ["isochrone", "isodistance"],
+                index=0,
+                help="Compute by travel time (isochrone) or distance (isodistance)",
+            )
+            mobility = st.selectbox(
+                "Travel Mode",
+                ["motor_vehicle", "bicycle", "pedestrian"],
+                index=0,
+            )
+            speed_type = st.selectbox(
+                "Speed Profile",
+                ["very_low", "low", "normal", "fast"],
+                index=2,
+            )
+            speed_limit = st.number_input(
+                "Maximum Speed (km/h)",
+                min_value=10.0,
+                max_value=200.0,
+                value=50.0,
+                step=5.0,
+                help="Optional: maximum speed used for Iso4App isochrones",
+            )
+
+            st.session_state.iso4app_type = iso_type
+            st.session_state.iso4app_mobility = mobility
+            st.session_state.iso4app_speed_type = speed_type
+            st.session_state.iso4app_speed_limit = speed_limit
 
         # Colormap selection
         colormap = st.selectbox(
@@ -236,10 +252,8 @@ def render_sidebar():
                 "RdYlBu_r",
             ],
             index=0,
-            help="Color scheme for time bands (shorter time = more intense color)",
+            help="Color scheme for polygon fill",
         )
-
-        # Store colormap in session state for fragment access
         st.session_state.colormap = colormap
 
         st.markdown("---")
@@ -249,24 +263,38 @@ def render_sidebar():
         st.write(f"**Settings:**")
         st.write(f"Provider: {provider}")
         st.write(f"Travel time: {rho}h")
-        if time_bands == 1:
-            st.write(f"Mode: Single polygon")
-        else:
-            st.write(f"Bands: {time_bands} equally spaced")
 
-    return provider, rho, time_bands, colormap
+        if provider == "iso4app":
+            st.write(f"Type: {iso_type}")
+            st.write(f"Mobility: {mobility}")
+            st.write(f"Speed: {speed_type}")
+            if speed_limit:
+                st.write(f"Speed limit: {speed_limit} km/h")
+
+    return provider, rho, colormap
 
 
-def process_isochrone_request(center_name, lat, lng, rho, provider, time_bands):
+def process_isochrone_request(center_name, lat, lng, rho, provider):
     """Process isochrone computation request"""
     payload = {
         "centroids": [{"lat": lat, "lon": lng, "rho": rho, "id": center_name}],
         "options": {
             "provider": provider,
             "travel_speed_kph": 25,
-            "num_bands": time_bands,
+            "num_bands": 1,
         },
     }
+
+    # Iso4App extras
+    if provider == "iso4app":
+        payload["options"].update(
+            {
+                "iso4app_type": st.session_state.iso4app_type,
+                "iso4app_mobility": st.session_state.iso4app_mobility,
+                "iso4app_speed_type": st.session_state.iso4app_speed_type,
+                "iso4app_speed_limit": st.session_state.iso4app_speed_limit,
+            }
+        )
 
     result = call_api(ISOCHRONES_ENDPOINT, payload)
 
@@ -308,7 +336,7 @@ def process_isochrone_request(center_name, lat, lng, rho, provider, time_bands):
     return False
 
 
-def handle_map_click(map_data, provider, rho, time_bands):
+def handle_map_click(map_data, provider, rho):
     """Handle map click interactions"""
     data = None
     if map_data.get("last_clicked"):
@@ -326,14 +354,15 @@ def handle_map_click(map_data, provider, rho, time_bands):
         with col3:
             if st.button("➕ Add Center", type="primary"):
                 center_name = f"Center{len(st.session_state.centers) + 1}"
-                st.session_state.centers[center_name] = {"lat": lat, "lng": lng}
 
                 with st.spinner(f"Computing isochrone for {center_name}..."):
                     success = process_isochrone_request(
-                        center_name, lat, lng, rho, provider, time_bands
+                        center_name, lat, lng, rho, provider
                     )
 
                     if success:
+                        # Only persist the marker if the isochrone computed successfully
+                        st.session_state.centers[center_name] = {"lat": lat, "lng": lng}
                         st.rerun()
 
     else:
@@ -393,7 +422,7 @@ def render_center_controls():
 # -------------------------
 # SPATIAL ANALYSIS FUNCTIONS
 # -------------------------
-def send_analysis_request(provider, rho, time_bands):
+def send_analysis_request(provider, rho):
     """Send analysis request with all current centers and uploaded coordinates"""
     if not st.session_state.centers:
         return None
@@ -425,10 +454,20 @@ def send_analysis_request(provider, rho, time_bands):
         "options": {
             "provider": provider,
             "travel_speed_kph": 25,
-            "num_bands": time_bands,
+            "num_bands": 1,
         },
         "pois": pois if pois else None,
     }
+
+    if provider == "iso4app":
+        payload["options"].update(
+            {
+                "iso4app_type": st.session_state.iso4app_type,
+                "iso4app_mobility": st.session_state.iso4app_mobility,
+                "iso4app_speed_type": st.session_state.iso4app_speed_type,
+                "iso4app_speed_limit": st.session_state.iso4app_speed_limit,
+            }
+        )
 
     return call_api(ISOCHRONES_ENDPOINT, payload)
 
@@ -599,7 +638,7 @@ def render_spatial_analysis_panel():
         if st.button("🔍 Analyze Coverage", type="primary", use_container_width=True):
             with st.spinner("Computing spatial analysis..."):
                 try:
-                    result = send_analysis_request(provider, rho, time_bands)
+                    result = send_analysis_request(provider, rho)
 
                     if (
                         result
@@ -652,7 +691,7 @@ def main():
         st.session_state.isochrones = {}
 
     # Render sidebar and get settings
-    provider, rho, time_bands, colormap = render_sidebar()
+    provider, rho, colormap = render_sidebar()
 
     # Main content
     st.title("🗺️ Click to Add Isochrone Centers")
@@ -662,7 +701,7 @@ def main():
     map_data = draw_map()
 
     # Handle map interactions
-    handle_map_click(map_data, provider, rho, time_bands)
+    handle_map_click(map_data, provider, rho)
 
     # Render controls
     render_center_controls()
