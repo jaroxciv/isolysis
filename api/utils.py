@@ -1,12 +1,17 @@
 import uuid
 import json
+import requests
 from typing import Dict, List, Optional, Tuple
 
+import pandas as pd
 import folium as fl
-import requests
 import streamlit as st
+from loguru import logger
 
 from isolysis.io import Coordinate
+
+
+REQUIRED_COLUMNS = {"Categoria", "Subcategoria", "Nombre", "Latitud", "Longitud"}
 
 
 def get_pos(lat, lng):
@@ -87,20 +92,37 @@ def get_band_color(
     return hex_color, border_hex
 
 
-@st.cache_data
-def handle_coordinate_upload(uploaded_file) -> Optional[List[Coordinate]]:
-    """
-    Process uploaded JSON file and return list of Coordinate objects.
+# -----------------------------
+# Shared utilities
+# -----------------------------
+def _to_float(x):
+    """Convert '13,45' or '13.45' safely to float."""
+    if pd.isna(x):
+        return None
+    if isinstance(x, str):
+        x = x.strip().replace(",", ".")
+    try:
+        return float(x)
+    except Exception:
+        return None
 
-    - Cast lat/lon to float if needed
-    - Normalize lng → lon
-    - Ensure each POI has an id
-    - Preserve extra fields (e.g. department, unit_sis) in metadata
+
+# -----------------------------
+# JSON parser
+# -----------------------------
+def _parse_json_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
+    """
+    Parse JSON coordinate file (like localization.json).
+    Expected: list of dicts with 'lat' and 'lon' keys.
     """
     try:
         # Read and parse JSON
         content = uploaded_file.read()
         data = json.loads(content)
+
+        if not isinstance(data, list):
+            logger.error("❌ JSON must be a list of coordinate objects.")
+            return None
 
         normalized = []
         for item in data:
@@ -116,7 +138,7 @@ def handle_coordinate_upload(uploaded_file) -> Optional[List[Coordinate]]:
             if "id" not in item:
                 item["id"] = str(uuid.uuid4())
 
-            # Optional: fold unknown keys into metadata
+            # Optional: fold extra fields into metadata
             metadata = {
                 k: v
                 for k, v in item.items()
@@ -128,13 +150,104 @@ def handle_coordinate_upload(uploaded_file) -> Optional[List[Coordinate]]:
             normalized.append(item)
 
         coordinates = [Coordinate(**item) for item in normalized]
+        logger.success(f"✅ Loaded {len(coordinates)} coordinates from JSON")
         return coordinates
 
     except json.JSONDecodeError:
-        st.error("❌ Invalid JSON format")
+        logger.error("❌ Invalid JSON format")
         return None
     except Exception as e:
-        st.error(f"❌ Error processing coordinates: {str(e)}")
+        logger.error(f"❌ Error parsing JSON coordinates: {e}")
+        return None
+
+
+# -----------------------------
+# CSV / XLSX parser
+# -----------------------------
+def _parse_tabular_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
+    """
+    Parse coordinates from CSV or XLSX files.
+    Requires columns: Categoria, Subcategoria, Nombre, Latitude, Longitud.
+    """
+    try:
+        file_name = uploaded_file.name.lower()
+        if file_name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        elif file_name.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(uploaded_file)
+        else:
+            logger.error("❌ Unsupported tabular file type.")
+            return None
+
+        # Normalize headers
+        df.columns = [str(c).strip() for c in df.columns]
+
+        # Validate required columns
+        missing = REQUIRED_COLUMNS.difference(df.columns)
+        if missing:
+            logger.error(f"❌ Missing required columns: {', '.join(sorted(missing))}")
+            return None
+
+        # Clean data
+        df["Latitud"] = df["Latitud"].apply(_to_float)
+        df["Longitud"] = df["Longitud"].apply(_to_float)
+        df["Nombre"] = df["Nombre"].astype(str).str.strip()
+        df["Categoria"] = df["Categoria"].astype(str).str.strip()
+        df["Subcategoria"] = df["Subcategoria"].astype(str).str.strip()
+
+        df = df.dropna(subset=["Latitud", "Longitud"])
+        df = df[(df["Latitud"].between(-90, 90)) & (df["Longitud"].between(-180, 180))]
+
+        coordinates = []
+        for i, row in df.iterrows():
+            coordinates.append(
+                Coordinate(
+                    id=f"poi_{i+1}",
+                    name=row["Nombre"],
+                    lat=row["Latitud"],
+                    lon=row["Longitud"],
+                    region=None,
+                    municipality=None,
+                    metadata={
+                        "Categoria": row["Categoria"],
+                        "Subcategoria": row["Subcategoria"],
+                    },
+                )
+            )
+
+        logger.success(f"✅ Loaded {len(coordinates)} coordinates from {file_name}")
+        return coordinates
+
+    except Exception as e:
+        logger.error(f"❌ Error parsing tabular coordinates: {e}")
+        return None
+
+
+# -----------------------------
+# Generic dispatcher
+# -----------------------------
+@st.cache_data
+def handle_coordinate_upload(uploaded_file) -> Optional[List[Coordinate]]:
+    """
+    Detect file type and delegate parsing.
+    Supports: JSON, CSV, XLSX.
+    Returns a list[Coordinate] or None.
+    """
+    try:
+        file_name = uploaded_file.name.lower()
+
+        if file_name.endswith(".json"):
+            return _parse_json_coordinates(uploaded_file)
+
+        elif file_name.endswith((".csv", ".xlsx", ".xls")):
+            return _parse_tabular_coordinates(uploaded_file)
+
+        else:
+            logger.error("❌ Unsupported file type. Use JSON, CSV, or XLSX.")
+            return None
+
+    except Exception as e:
+        logger.error(f"❌ Error processing coordinate upload: {e}")
         return None
 
 
