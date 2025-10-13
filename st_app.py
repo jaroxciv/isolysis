@@ -476,7 +476,7 @@ def render_analysis_summary(analysis):
     """Render high-level analysis summary"""
     st.subheader("📊 Analysis Summary")
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     with col1:
         st.metric(
@@ -486,6 +486,18 @@ def render_analysis_summary(analysis):
         )
 
     with col2:
+        noi = analysis.get("network_optimization_index", None)
+        help_msg = f"(X - Y - Z) / total_pois - measures how efficiently the network covers POIs"
+        if noi is not None:
+            st.metric(
+                "Network Optimization Index",
+                f"{noi:.3f}",
+                help=help_msg,
+            )
+        else:
+            st.metric("Network Optimization Index", "N/A")
+
+    with col3:
         coverage = analysis["global_coverage_percentage"]
         st.metric(
             "Coverage",
@@ -493,7 +505,7 @@ def render_analysis_summary(analysis):
             help="Percentage of POIs covered by at least one isochrone",
         )
 
-    with col3:
+    with col4:
         intersections = analysis["intersection_analysis"]["total_intersections"]
         st.metric(
             "Intersections",
@@ -501,7 +513,7 @@ def render_analysis_summary(analysis):
             help="Number of overlapping areas between different centers",
         )
 
-    with col4:
+    with col5:
         total_pois = analysis["total_pois"]
         oob_count = analysis["oob_analysis"]["total_oob_pois"]
         covered_count = total_pois - oob_count
@@ -511,7 +523,7 @@ def render_analysis_summary(analysis):
             help="POIs covered by at least one isochrone",
         )
 
-    with col5:
+    with col6:
         oob_count = analysis["oob_analysis"]["total_oob_pois"]
         st.metric(
             "Uncovered",
@@ -630,7 +642,6 @@ def render_spatial_analysis_panel():
     # Get current settings
     provider = st.session_state.get("provider", "osmnx")
     rho = st.session_state.get("rho", 1.0)
-    time_bands = st.session_state.get("time_bands", 1)
 
     col1, col2 = st.columns([1, 3])
 
