@@ -153,9 +153,13 @@ def handle_coordinate_upload_sidebar():
     """Handle coordinate upload in sidebar"""
     st.subheader("📂 Upload Coordinates")
     uploaded_file = st.file_uploader(
-        "Upload JSON coordinates",
-        type=["json"],
-        help="Upload a JSON file with coordinate data",
+        "Upload coordinates (JSON, CSV, XLSX)",
+        type=["json", "csv", "xlsx"],
+        help=(
+            "Upload a file with coordinates. "
+            "CSV/XLSX must include columns: "
+            "Categoria, Subcategoria, Nombre, Latitud, Longitud."
+        ),
     )
 
     if uploaded_file is not None:
