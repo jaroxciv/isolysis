@@ -3,6 +3,7 @@ import json
 import requests
 from typing import Dict, List, Optional, Tuple
 
+import rasterio
 import pandas as pd
 import folium as fl
 import streamlit as st
@@ -42,8 +43,8 @@ def get_map_center():
         last_coords = st.session_state.centers[last_center_name]
         return [last_coords["lat"], last_coords["lng"]]
 
-    # Default: London
-    return [51.5074, -0.1278]
+    # Default: El Salvador 🇸🇻
+    return [13.7942, -88.8965]
 
 
 def format_time_display(hours: float) -> str:
