@@ -332,8 +332,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-"https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/2015/SLV/v1/100m/constrained/slv_pop_2015_CN_100m_R2025A_v1.tif"
-"https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/2016/SLV/v1/100m/constrained/slv_pop_2016_CN_100m_R2025A_v1.tif"
-"https://data.worldpop.org/GIS/Population/Global_2015_2030/R2025A/2030/SLV/v1/100m/constrained/slv_pop_2030_CN_100m_R2025A_v1.tif"
