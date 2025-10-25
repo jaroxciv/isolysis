@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
+from api import rasters
 from api.schemas import (
     IsochroneRequest,
     IsochroneResponse,
@@ -43,6 +44,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# --- Additional routers ---
+app.include_router(rasters.router)
 
 
 # ---------- ENDPOINTS ----------
