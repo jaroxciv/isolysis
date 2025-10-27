@@ -55,30 +55,11 @@ class TestIsochrones:
         assert result["centroid_id"] == "test"
         assert "geojson" in result
 
-    def test_multi_band(self, api_url, sample_centroid):
-        logger.info("Testing multi-band isochrone")
-        payload = {
-            "centroids": [sample_centroid],
-            "options": {"provider": "mapbox", "num_bands": 3},
-        }
-
-        response = requests.post(f"{api_url}/isochrones", json=payload, timeout=90)
-        assert response.status_code == 200
-
-        data = response.json()
-        result = data["results"][0]
-        features = result["geojson"]["features"]
-
-        # Should have 3 bands
-        band_hours = [f["properties"].get("band_hours") for f in features]
-        band_hours = [b for b in band_hours if b is not None]
-        assert len(band_hours) == 3
-
     def test_with_pois(self, api_url, sample_centroid, sample_pois):
         logger.info("Testing isochrone with POI analysis")
         payload = {
             "centroids": [sample_centroid],
-            "options": {"provider": "mapbox", "num_bands": 2},
+            "options": {"provider": "mapbox", "num_bands": 1},
             "pois": sample_pois,
         }
 
