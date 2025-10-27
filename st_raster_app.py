@@ -6,8 +6,6 @@ import streamlit as st
 import folium as fl
 from streamlit_folium import st_folium
 from dotenv import find_dotenv, load_dotenv
-import geopandas as gpd
-from shapely.geometry import shape
 
 from api.utils import (
     call_api,
@@ -133,29 +131,64 @@ def render_sidebar():
     with st.sidebar:
         st.header("⚙️ Iso-Raster Settings")
 
+        # Travel time (rho)
         rho = st.slider(
             "Travel Time (hours)",
             min_value=0.5,
             max_value=10.0,
             value=1.0,
             step=0.5,
-            help="Max travel time for each centroid.",
+            help="Maximum travel time for each centroid.",
         )
+
+        # Iso4App-specific options
+        iso_type = st.selectbox(
+            "Isoline Type",
+            ["isochrone", "isodistance"],
+            index=0,
+            help="Compute by travel time (isochrone) or distance (isodistance)",
+        )
+        mobility = st.selectbox(
+            "Travel Mode",
+            ["motor_vehicle", "bicycle", "pedestrian"],
+            index=0,
+        )
+        speed_type = st.selectbox(
+            "Speed Profile",
+            ["very_low", "low", "normal", "fast"],
+            index=2,
+        )
+        speed_limit = st.number_input(
+            "Maximum Speed (km/h)",
+            min_value=10.0,
+            max_value=200.0,
+            value=50.0,
+            step=5.0,
+            help="Optional: maximum speed used for Iso4App isochrones",
+        )
+
+        # Colormap
         colormap = st.selectbox(
             "Color Scheme",
             ["viridis", "plasma", "magma", "inferno", "cividis", "Reds", "Blues"],
             index=0,
         )
 
+        # Raster upload
         uploaded_rasters = st.file_uploader(
             "📂 Upload Raster(s) (.tif)",
             type=["tif", "tiff"],
             accept_multiple_files=True,
         )
 
+        # Store selections
         st.session_state.rho = rho
         st.session_state.colormap = colormap
         st.session_state.uploaded_rasters = uploaded_rasters
+        st.session_state.iso4app_type = iso_type
+        st.session_state.iso4app_mobility = mobility
+        st.session_state.iso4app_speed_type = speed_type
+        st.session_state.iso4app_speed_limit = speed_limit
 
         if uploaded_rasters:
             st.success(f"✅ Loaded {len(uploaded_rasters)} raster(s)")
@@ -169,6 +202,8 @@ def render_sidebar():
                 st.session_state.coord_center = center
                 st.info(f"📍 Centered map on raster ({center[0]:.4f}, {center[1]:.4f})")
 
+    return rho, colormap
+
 
 # ---------------------------
 # ISOCHRONE LOGIC
@@ -180,9 +215,12 @@ def process_isochrone(center_name, lat, lon, rho):
             "provider": "iso4app",
             "travel_speed_kph": 25,
             "num_bands": 1,
-            "iso4app_type": "isochrone",
-            "iso4app_mobility": "motor_vehicle",
-            "iso4app_speed_type": "normal",
+            "iso4app_type": st.session_state.get("iso4app_type", "isochrone"),
+            "iso4app_mobility": st.session_state.get(
+                "iso4app_mobility", "motor_vehicle"
+            ),
+            "iso4app_speed_type": st.session_state.get("iso4app_speed_type", "normal"),
+            "iso4app_speed_limit": st.session_state.get("iso4app_speed_limit", 50.0),
         },
     }
 
