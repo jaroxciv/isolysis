@@ -190,6 +190,9 @@ def raster_stats_endpoint(payload: Dict[str, Any]):
         # Convert to GeoDataFrame-like dict for Streamlit table
         return {"results": results}
 
+    except HTTPException:
+        # Let FastAPI handle it as-is (preserves original status)
+        raise
     except Exception as e:
         logger.exception("Raster analysis failed.")
         raise HTTPException(status_code=500, detail=str(e))
