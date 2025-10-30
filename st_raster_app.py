@@ -181,10 +181,18 @@ def render_sidebar():
             accept_multiple_files=True,
         )
 
+        # Boundary upload
+        uploaded_boundary = st.file_uploader(
+            "📂 Upload Administrative Boundary (.shp, .gpkg, .geojson)",
+            type=["shp", "gpkg", "geojson"],
+            accept_multiple_files=False,
+        )
+
         # Store selections
         st.session_state.rho = rho
         st.session_state.colormap = colormap
         st.session_state.uploaded_rasters = uploaded_rasters
+        st.session_state.uploaded_boundary = uploaded_boundary
         st.session_state.iso4app_type = iso_type
         st.session_state.iso4app_mobility = mobility
         st.session_state.iso4app_speed_type = speed_type
@@ -201,6 +209,9 @@ def render_sidebar():
             if center:
                 st.session_state.coord_center = center
                 st.info(f"📍 Centered map on raster ({center[0]:.4f}, {center[1]:.4f})")
+
+        if uploaded_boundary:
+            st.success(f"✅ Boundary file loaded: {uploaded_boundary.name}")
 
     return rho, colormap
 
@@ -250,10 +261,11 @@ def process_isochrone(center_name, lat, lon, rho):
 # MAP + INTERACTION
 # ---------------------------
 def draw_map():
+    """Draw the folium map and update dynamically using st_folium's new parameters."""
     m = create_base_map()
     fg = fl.FeatureGroup(name="Isochrones")
 
-    # Add all existing polygons
+    # --- Add isochrones dynamically ---
     for cname, data in st.session_state.isochrones.items():
         for band in data["bands"]:
             geo = band["geojson_feature"]
@@ -270,20 +282,26 @@ def draw_map():
                 tooltip=f"{cname} - {band['band_label']}",
             ).add_to(fg)
 
-    m.add_child(fg)
-    map_center = get_map_center()
-
-    # Overlay raster if available
+    # --- Overlay first raster if available ---
     if st.session_state.uploaded_rasters:
         first_raster = st.session_state.uploaded_rasters[0]
         temp_path = save_uploaded_file(first_raster)
         add_raster_to_map(m, temp_path, layer_name=first_raster.name, opacity=0.6)
 
-    zoom_level = 9 if hasattr(st.session_state, "coord_center") else 9
+    # --- Compute map center and zoom ---
+    if hasattr(st.session_state, "coord_center"):
+        center = st.session_state.coord_center
+    else:
+        center = get_map_center()
+
+    zoom = 9
+
+    # --- Use new dynamic update arguments ---
     return st_folium(
         m,
-        center=map_center,
-        zoom=zoom_level,
+        center=center,
+        zoom=zoom,
+        feature_group_to_add=fg,
         key="raster_map",
         height=500,
         width=None,
@@ -309,23 +327,40 @@ def handle_map_click(map_data):
 # RASTER STATS
 # ---------------------------
 def compute_raster_stats():
-    if not st.session_state.isochrones:
-        st.warning("Add at least one isochrone first.")
-        return
     if not st.session_state.uploaded_rasters:
         st.warning("Upload at least one raster file.")
         return
 
-    raster_paths = [save_uploaded_file(f) for f in st.session_state.uploaded_rasters]
-    isochrones = []
-    for cid, data in st.session_state.isochrones.items():
-        geo = data["bands"][0]["geojson_feature"]["geometry"]
-        isochrones.append({"centroid_id": cid, "geometry": geo})
+    boundary = st.session_state.get("uploaded_boundary")
+    isochrones_exist = bool(st.session_state.isochrones)
 
+    # --- Mutual exclusion check ---
+    if boundary and isochrones_exist:
+        st.error("❌ Please use either boundary or isochrones, not both.")
+        return
+
+    if not boundary and not isochrones_exist:
+        st.warning("Upload a boundary file or add isochrones first.")
+        return
+
+    # --- Prepare raster paths ---
+    raster_paths = [save_uploaded_file(f) for f in st.session_state.uploaded_rasters]
     payload = {
-        "isochrones": isochrones,
-        "rasters": [{"name": os.path.basename(p), "path": p} for p in raster_paths],
+        "rasters": [{"name": os.path.basename(p), "path": p} for p in raster_paths]
     }
+
+    # --- Choose polygon source ---
+    if boundary:
+        boundary_path = save_uploaded_file(boundary)
+        payload["boundary_path"] = boundary_path
+    else:
+        isochrones = []
+        for cid, data in st.session_state.isochrones.items():
+            geo = data["bands"][0]["geojson_feature"]["geometry"]
+            isochrones.append({"centroid_id": cid, "geometry": geo})
+        payload["isochrones"] = isochrones
+
+    # --- API call ---
     with st.spinner("Computing raster statistics..."):
         result = call_api(RASTER_STATS_ENDPOINT, payload)
         if result and "results" in result:
@@ -361,6 +396,19 @@ def main():
     st.caption("Compute raster statistics inside isochrones and their intersections.")
     map_data = draw_map()
     handle_map_click(map_data)
+
+    # --- Manage loaded isochrones ---
+    if st.session_state.isochrones:
+        st.subheader("🗺️ Loaded Isochrones")
+        for cname in list(st.session_state.isochrones.keys()):
+            cols = st.columns([4, 1])
+            cols[0].write(
+                f"**{cname}** - {len(st.session_state.isochrones[cname]['bands'])} band(s)"
+            )
+            if cols[1].button("❌ Remove", key=f"remove_{cname}"):
+                del st.session_state.isochrones[cname]
+                st.toast(f"Isochrone '{cname}' removed.")
+                st.rerun()
 
     if st.button("📊 Compute Raster Stats", type="primary"):
         compute_raster_stats()
