@@ -4,8 +4,15 @@ import rasterio
 import tempfile
 import streamlit as st
 import folium as fl
+import numpy as np
+import geopandas as gpd
+import matplotlib.pyplot as plt
 from streamlit_folium import st_folium
 from dotenv import find_dotenv, load_dotenv
+
+import base64
+from PIL import Image
+from io import BytesIO
 
 from api.utils import (
     call_api,
@@ -14,6 +21,19 @@ from api.utils import (
     get_band_color,
     get_pos,
 )
+
+
+# ---------------------------
+# TEMP DIR SETUP (shared path for Streamlit + API)
+# ---------------------------
+import warnings
+
+warnings.filterwarnings("ignore", message=".*GPKG application_id.*")
+
+# Force all temp files into a shared folder within the project
+tempfile.tempdir = os.path.join(os.getcwd(), "data", "tmp", "iso_raster_current")
+os.makedirs(tempfile.tempdir, exist_ok=True)
+
 
 # ---------------------------
 # ENV + CONFIG
@@ -41,15 +61,6 @@ def create_base_map():
 
 
 @st.cache_data
-def save_uploaded_file(uploaded_file):
-    """Save raster to a temp file and return its path"""
-    suffix = os.path.splitext(uploaded_file.name)[-1]
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(uploaded_file.read())
-        return tmp.name
-
-
-@st.cache_data
 def get_raster_center(raster_path: str):
     """Return (lat, lon) center coordinates of a raster file."""
     try:
@@ -63,65 +74,119 @@ def get_raster_center(raster_path: str):
         return None
 
 
-def add_raster_to_map(m, raster_path, layer_name="Raster Overlay", opacity=0.7):
-    """Overlay a raster on the folium map with transparency for nodata / zeros."""
-    import rasterio
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from PIL import Image
-    import base64
-    from io import BytesIO
-    import folium
+@st.cache_data
+def load_uploaded_file(uploaded_file):
+    """
+    Cache and return the file bytes in memory.
+    Used for quick visualization, not for heavy processing.
+    """
+    return uploaded_file.getvalue()
 
+
+def read_raster(uploaded_file):
+    """Read raster from memory for map visualization (not for backend)."""
+    file_bytes = load_uploaded_file(uploaded_file)
+    dataset = rasterio.open(BytesIO(file_bytes))
+    return dataset
+
+
+def read_boundary(uploaded_file):
+    """
+    Safely read boundary file (GPKG, GeoJSON, or ZIP shapefile).
+    Writes GeoPackage to a temporary file because GDAL needs a real path.
+    """
+    file_bytes = load_uploaded_file(uploaded_file)
+
+    if uploaded_file.name.endswith(".gpkg"):
+        with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        gdf = gpd.read_file(tmp_path)
+        return gdf
+
+    if uploaded_file.name.endswith(".geojson"):
+        gdf = gpd.read_file(BytesIO(file_bytes))
+        return gdf
+
+    if uploaded_file.name.endswith(".zip"):
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        gdf = gpd.read_file(f"zip://{tmp_path}")
+        return gdf
+
+    st.warning("Unsupported boundary format.")
+    return None
+
+
+def add_raster_to_map(m, uploaded_file, layer_name="Raster Overlay", opacity=0.7):
+    """Overlay a raster from uploaded bytes."""
     try:
-        with rasterio.open(raster_path) as src:
-            data = src.read(1)
-            bounds = src.bounds
+        dataset = read_raster(uploaded_file)
+        data = dataset.read(1)
+        bounds = dataset.bounds
+        dataset.close()
 
-            # Mask out no-data and zeros
-            if src.nodata is not None:
-                mask = data == src.nodata
-            else:
-                mask = data <= 0  # treat 0 and negatives as empty
+        # Mask and normalize
+        mask = data <= 0
+        data = np.where(mask, np.nan, data)
+        vmin, vmax = np.nanmin(data), np.nanmax(data)
+        norm = plt.Normalize(vmin=vmin, vmax=vmax)
+        cmap = plt.get_cmap("viridis")
+        rgba_img = cmap(norm(data))
+        rgba_img[..., 3] = np.where(np.isnan(data), 0, 1)
 
-            data = np.where(mask, np.nan, data)
+        rgb_img = (rgba_img[:, :, :3] * 255).astype(np.uint8)
+        alpha = (rgba_img[:, :, 3] * 255).astype(np.uint8)
+        rgba_8bit = np.dstack((rgb_img, alpha))
 
-            # Normalize only non-NaN values
-            vmin, vmax = np.nanmin(data), np.nanmax(data)
-            norm = plt.Normalize(vmin=vmin, vmax=vmax)
+        img = Image.fromarray(rgba_8bit)
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        b64_img = base64.b64encode(buf.getvalue()).decode("utf-8")
 
-            cmap = plt.get_cmap("viridis")
-            rgba_img = cmap(norm(data))
+        bounds_sw = [bounds.bottom, bounds.left]
+        bounds_ne = [bounds.top, bounds.right]
 
-            # Make masked/NaN values fully transparent
-            rgba_img[..., 3] = np.where(np.isnan(data), 0, 1)
-
-            rgb_img = (rgba_img[:, :, :3] * 255).astype(np.uint8)
-            alpha = (rgba_img[:, :, 3] * 255).astype(np.uint8)
-            rgba_8bit = np.dstack((rgb_img, alpha))
-
-            # Convert to PNG
-            img = Image.fromarray(rgba_8bit)
-            buf = BytesIO()
-            img.save(buf, format="PNG")
-            b64_img = base64.b64encode(buf.getvalue()).decode("utf-8")
-
-            # Map bounds
-            bounds_sw = [bounds.bottom, bounds.left]
-            bounds_ne = [bounds.top, bounds.right]
-
-            folium.raster_layers.ImageOverlay(
-                image=f"data:image/png;base64,{b64_img}",
-                bounds=[bounds_sw, bounds_ne],
-                opacity=opacity,
-                name=layer_name,
-                interactive=True,
-                cross_origin=False,
-                zindex=1,
-            ).add_to(m)
+        fl.raster_layers.ImageOverlay(
+            image=f"data:image/png;base64,{b64_img}",
+            bounds=[bounds_sw, bounds_ne],
+            opacity=opacity,
+            name=layer_name,
+        ).add_to(m)
 
     except Exception as e:
         st.warning(f"⚠️ Could not render raster overlay: {e}")
+
+
+def add_boundary_to_map(m, uploaded_file, layer_name="Boundary", color="#ff7800"):
+    """Add boundary polygons from uploaded file (gpkg, geojson, or zipped shapefile)."""
+    try:
+        gdf = read_boundary(uploaded_file)
+        if gdf is None or gdf.empty:
+            st.warning("⚠️ Boundary file contains no geometries.")
+            return
+
+        fl.GeoJson(
+            gdf.to_json(),
+            name=layer_name,
+            style_function=lambda x: {
+                "fillColor": "#00000000",
+                "color": color,
+                "weight": 2,
+                "opacity": 0.8,
+            },
+            tooltip=layer_name,
+        ).add_to(m)
+
+        # Center map
+        gdf_proj = gdf.to_crs(3857)
+        centroid = gdf_proj.geometry.union_all().centroid
+        centroid_wgs84 = gpd.GeoSeries([centroid], crs=3857).to_crs(4326).iloc[0]
+        st.session_state.coord_center = (centroid_wgs84.y, centroid_wgs84.x)
+
+    except Exception as e:
+        st.warning(f"⚠️ Could not render boundary overlay: {e}")
 
 
 # ---------------------------
@@ -183,9 +248,8 @@ def render_sidebar():
 
         # Boundary upload
         uploaded_boundary = st.file_uploader(
-            "📂 Upload Administrative Boundary (.shp, .gpkg, .geojson)",
-            type=["shp", "gpkg", "geojson"],
-            accept_multiple_files=False,
+            "Upload boundary file (.gpkg, .geojson, .zip for shapefile)",
+            type=["gpkg", "geojson", "zip"],
         )
 
         # Store selections
@@ -198,20 +262,50 @@ def render_sidebar():
         st.session_state.iso4app_speed_type = speed_type
         st.session_state.iso4app_speed_limit = speed_limit
 
+        # ---------------------------
+        # RASTER CENTERING
+        # ---------------------------
         if uploaded_rasters:
             st.success(f"✅ Loaded {len(uploaded_rasters)} raster(s)")
 
-            # Zoom map to center of first uploaded raster
-            first_raster = uploaded_rasters[0]
-            temp_path = save_uploaded_file(first_raster)
-            center = get_raster_center(temp_path)
+            try:
+                first_raster = uploaded_rasters[0]
+                dataset = read_raster(first_raster)
+                bounds = dataset.bounds
+                center = (
+                    (bounds.top + bounds.bottom) / 2,
+                    (bounds.left + bounds.right) / 2,
+                )
+                dataset.close()
 
-            if center:
                 st.session_state.coord_center = center
                 st.info(f"📍 Centered map on raster ({center[0]:.4f}, {center[1]:.4f})")
 
+            except Exception as e:
+                st.warning(f"⚠️ Could not compute raster center: {e}")
+
+        # ---------------------------
+        # BOUNDARY CENTERING
+        # ---------------------------
         if uploaded_boundary:
-            st.success(f"✅ Boundary file loaded: {uploaded_boundary.name}")
+            file_names = (
+                [f.name for f in uploaded_boundary]
+                if isinstance(uploaded_boundary, list)
+                else [uploaded_boundary.name]
+            )
+            st.success(f"✅ Loaded boundary file(s): {', '.join(file_names)}")
+
+            try:
+                gdf = read_boundary(uploaded_boundary)
+                if gdf is not None and not gdf.empty:
+                    gdf_proj = gdf.to_crs(3857)
+                    centroid = gdf_proj.geometry.union_all().centroid
+                    centroid_wgs84 = (
+                        gpd.GeoSeries([centroid], crs=3857).to_crs(4326).iloc[0]
+                    )
+                    st.session_state.coord_center = (centroid_wgs84.y, centroid_wgs84.x)
+            except Exception as e:
+                st.warning(f"⚠️ Could not auto-center on boundary: {e}")
 
     return rho, colormap
 
@@ -285,8 +379,11 @@ def draw_map():
     # --- Overlay first raster if available ---
     if st.session_state.uploaded_rasters:
         first_raster = st.session_state.uploaded_rasters[0]
-        temp_path = save_uploaded_file(first_raster)
-        add_raster_to_map(m, temp_path, layer_name=first_raster.name, opacity=0.6)
+        add_raster_to_map(m, first_raster, layer_name=first_raster.name, opacity=0.6)
+
+    if st.session_state.get("uploaded_boundary"):
+        boundary_data = st.session_state.uploaded_boundary
+        add_boundary_to_map(m, boundary_data, layer_name="Boundary", color="#ff6600")
 
     # --- Compute map center and zoom ---
     if hasattr(st.session_state, "coord_center"):
@@ -327,6 +424,7 @@ def handle_map_click(map_data):
 # RASTER STATS
 # ---------------------------
 def compute_raster_stats():
+    """Send rasters + polygon source (isochrone or boundary) to backend."""
     if not st.session_state.uploaded_rasters:
         st.warning("Upload at least one raster file.")
         return
@@ -334,38 +432,58 @@ def compute_raster_stats():
     boundary = st.session_state.get("uploaded_boundary")
     isochrones_exist = bool(st.session_state.isochrones)
 
-    # --- Mutual exclusion check ---
+    # --- Validate polygon source ---
+    if not boundary and not isochrones_exist:
+        st.warning("Upload a boundary file or add isochrones first.")
+        return
     if boundary and isochrones_exist:
         st.error("❌ Please use either boundary or isochrones, not both.")
         return
 
-    if not boundary and not isochrones_exist:
-        st.warning("Upload a boundary file or add isochrones first.")
-        return
+    # --- Save rasters temporarily (shared, stable folder) ---
+    tmpdir = os.path.join("data", "tmp", "iso_raster_current")
+    os.makedirs(tmpdir, exist_ok=True)
 
-    # --- Prepare raster paths ---
-    raster_paths = [save_uploaded_file(f) for f in st.session_state.uploaded_rasters]
+    raster_paths = []
+    for f in st.session_state.uploaded_rasters:
+        path = os.path.join(tmpdir, f.name)
+        with open(path, "wb") as out:
+            out.write(f.getvalue())
+        raster_paths.append(path)
+
     payload = {
         "rasters": [{"name": os.path.basename(p), "path": p} for p in raster_paths]
     }
 
     # --- Choose polygon source ---
     if boundary:
-        boundary_path = save_uploaded_file(boundary)
-        payload["boundary_path"] = boundary_path
+        path = os.path.join(tmpdir, boundary.name)
+        with open(path, "wb") as out:
+            out.write(boundary.getvalue())
+        payload["boundary_path"] = path
     else:
-        isochrones = []
-        for cid, data in st.session_state.isochrones.items():
-            geo = data["bands"][0]["geojson_feature"]["geometry"]
-            isochrones.append({"centroid_id": cid, "geometry": geo})
-        payload["isochrones"] = isochrones
+        payload["isochrones"] = [
+            {
+                "centroid_id": cid,
+                "geometry": data["bands"][0]["geojson_feature"]["geometry"],
+            }
+            for cid, data in st.session_state.isochrones.items()
+        ]
 
-    # --- API call ---
+    # --- Call API ---
     with st.spinner("Computing raster statistics..."):
+        # st.write("Payload:", payload)
         result = call_api(RASTER_STATS_ENDPOINT, payload)
-        if result and "results" in result:
-            st.session_state.raster_results = result["results"]
-            st.success("✅ Raster stats computed!")
+        if not result:
+            st.error("❌ Raster stats request failed.")
+            return
+        if "results" not in result:
+            st.error("❌ Unexpected API response format.")
+            st.json(result)
+            return
+
+        st.session_state.raster_results = result["results"]
+        st.success("✅ Raster stats computed!")
 
 
 # ---------------------------
