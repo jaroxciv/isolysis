@@ -5,10 +5,13 @@ from fastapi import APIRouter, HTTPException
 from loguru import logger
 
 import rasterio
+import pandas as pd
 import geopandas as gpd
 from rasterstats import zonal_stats
 from shapely.geometry import shape
 from shapely import intersection_all
+
+from api.utils import resolve_project_path
 
 
 router = APIRouter(prefix="/raster-stats", tags=["Raster Analysis"])
@@ -126,72 +129,121 @@ def _compute_intersection_stats(iso_gdf: gpd.GeoDataFrame, raster_path: str):
     return intersections
 
 
+def _compute_stats_for_geometries(
+    gdf: gpd.GeoDataFrame, rasters: List[Dict[str, str]], scope: str
+) -> List[Dict[str, Any]]:
+    """Generic helper to compute zonal stats for a GeoDataFrame across rasters."""
+    results = []
+    for raster in rasters:
+        raster_path = raster["path"]
+        if not os.path.exists(raster_path):
+            logger.error(f"Raster not found: {raster_path}")
+            continue
+
+        logger.info(f"Processing raster: {os.path.basename(raster_path)}")
+        for idx, row in gdf.iterrows():
+            geom = row.geometry
+            stats = _compute_stats_for_polygon(geom, raster_path)
+            area_km2 = _compute_area_km2(geom)
+            name = (
+                row.get("centroid_id")
+                or row.get("name")
+                or row.get("NAME_1")
+                or row.get("NAME_2")
+                or f"Feature_{idx}"
+            )
+            results.append(
+                {
+                    "scope": scope,
+                    "centroid_id": name,
+                    "type": "polygon" if scope == "boundary" else "1-way",
+                    "area_km2": area_km2,
+                    **stats,
+                }
+            )
+    return results
+
+
+def _log_summary(results: List[Dict[str, Any]], label: str = "Results"):
+    """Log descriptive stats summary similar to df.describe()."""
+    if not results:
+        logger.warning(f"{label}: no results to summarize.")
+        return
+
+    df = pd.DataFrame(results)
+    numeric_cols = df.select_dtypes(include="number")
+    if numeric_cols.empty:
+        logger.info(f"{label}: no numeric columns to summarize.")
+        return
+
+    summary = numeric_cols.describe().T
+    logger.info(f"📊 {label} summary (n={len(df)})")
+    logger.info("\n" + summary.round(3).to_string())
+
+
 # -----------------------------
 # Main route
 # -----------------------------
 @router.post("")
 def raster_stats_endpoint(payload: Dict[str, Any]):
     """
-    Compute raster statistics for each isochrone and all valid intersections (2-way to N-way).
-    Returns flattened results suitable for DataFrame display.
+    Compute raster statistics for:
+      - Isochrone geometries (and their intersections)
+      - or uploaded boundary polygons from a file.
+
+    Returns flattened results suitable for display.
     """
     try:
-        isochrones = payload.get("isochrones")
         rasters = payload.get("rasters")
+        boundary_path = resolve_project_path(payload.get("boundary_path"))
+        isochrones = payload.get("isochrones")
 
-        if not isochrones or not rasters:
+        if not rasters:
+            raise HTTPException(status_code=400, detail="Missing raster files.")
+
+        for r in rasters:
+            r["path"] = resolve_project_path(r.get("path"))
+
+        logger.debug(f"Working dir: {os.getcwd()}")
+        for r in rasters:
+            logger.debug(f"Exists({r['path']}): {os.path.exists(r['path'])}")
+        logger.debug(f"Boundary provided: {bool(boundary_path)}")
+
+        # CASE 1: Boundary
+        if boundary_path and os.path.exists(boundary_path):
+            logger.info(f"Running BOUNDARY mode with file: {boundary_path}")
+            gdf = gpd.read_file(boundary_path).to_crs(4326)
+            results = _compute_stats_for_geometries(gdf, rasters, scope="boundary")
+            _log_summary(results, label="Boundary stats")
+            return {"results": results}
+
+        # CASE 2: Isochrones
+        elif isochrones:
+            logger.info(f"Running ISOCHRONE mode for {len(isochrones)} centroids")
+            iso_gdf = gpd.GeoDataFrame(
+                [
+                    {"centroid_id": i["centroid_id"], "geometry": shape(i["geometry"])}
+                    for i in isochrones
+                ],
+                crs="EPSG:4326",
+            )
+            results = _compute_stats_for_geometries(iso_gdf, rasters, scope="isochrone")
+
+            # Add intersection stats
+            for raster in rasters:
+                inter_stats = _compute_intersection_stats(iso_gdf, raster["path"])
+                results.extend(inter_stats)
+
+            _log_summary(results, label="Isochrone stats")
+            return {"results": results}
+
+        else:
             raise HTTPException(
-                status_code=400, detail="Missing isochrones or rasters."
+                status_code=400,
+                detail="No valid geometry source found (isochrones or boundary).",
             )
-
-        # Convert to GeoDataFrame
-        iso_gdf = gpd.GeoDataFrame(
-            [
-                {"centroid_id": i["centroid_id"], "geometry": shape(i["geometry"])}
-                for i in isochrones
-            ],
-            crs="EPSG:4326",
-        )
-
-        results = []
-
-        for raster in rasters:
-            raster_path = raster["path"]
-            if not os.path.exists(raster_path):
-                logger.error(f"Raster not found: {raster_path}")
-                continue
-
-            raster_name = os.path.basename(raster_path)
-            logger.info(
-                f"Computing raster stats for {len(iso_gdf)} polygons on {raster_name}"
-            )
-
-            # Individual isochrone stats
-            for _, row in iso_gdf.iterrows():
-                stats = _compute_stats_for_polygon(row.geometry, raster_path)
-                area_km2 = _compute_area_km2(row.geometry)
-                results.append(
-                    {
-                        "scope": "isochrone",
-                        "centroid_id": row["centroid_id"],
-                        # "raster": raster_name,
-                        "type": "1-way",
-                        "area_km2": area_km2,
-                        **stats,
-                    }
-                )
-
-            # Intersections (pairwise & multi)
-            inter_stats = _compute_intersection_stats(iso_gdf, raster_path)
-            for rec in inter_stats:
-                rec["scope"] = "intersection"
-                results.append(rec)
-
-        # Convert to GeoDataFrame-like dict for Streamlit table
-        return {"results": results}
 
     except HTTPException:
-        # Let FastAPI handle it as-is (preserves original status)
         raise
     except Exception as e:
         logger.exception("Raster analysis failed.")
