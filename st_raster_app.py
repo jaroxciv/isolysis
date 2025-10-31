@@ -119,47 +119,78 @@ def read_boundary(uploaded_file):
     return None
 
 
-def add_raster_to_map(m, uploaded_file, layer_name="Raster Overlay", opacity=0.7):
-    """Overlay a raster from uploaded bytes."""
-    try:
-        dataset = read_raster(uploaded_file)
+@st.cache_data(show_spinner=False)
+def raster_to_png_path(_file_bytes: bytes, _name: str, colormap="viridis"):
+    """
+    Convert raster bytes to a temporary PNG file and cache the resulting path.
+    Reuses the same PNG if the same raster bytes are passed again.
+    `_name` is included only to give Streamlit a unique cache key per file.
+    """
+    with rasterio.open(BytesIO(_file_bytes)) as dataset:
         data = dataset.read(1)
         bounds = dataset.bounds
-        dataset.close()
 
-        # Mask and normalize
-        mask = data <= 0
-        data = np.where(mask, np.nan, data)
-        vmin, vmax = np.nanmin(data), np.nanmax(data)
-        norm = plt.Normalize(vmin=vmin, vmax=vmax)
-        cmap = plt.get_cmap("viridis")
-        rgba_img = cmap(norm(data))
-        rgba_img[..., 3] = np.where(np.isnan(data), 0, 1)
+    # Normalize data
+    mask = data <= 0
+    data = np.where(mask, np.nan, data)
+    vmin, vmax = np.nanmin(data), np.nanmax(data)
+    norm = plt.Normalize(vmin=vmin, vmax=vmax)
+    cmap = plt.get_cmap(colormap)
+    rgba_img = cmap(norm(data))
+    rgba_img[..., 3] = np.where(np.isnan(data), 0, 1)
 
-        rgb_img = (rgba_img[:, :, :3] * 255).astype(np.uint8)
-        alpha = (rgba_img[:, :, 3] * 255).astype(np.uint8)
-        rgba_8bit = np.dstack((rgb_img, alpha))
+    # Save PNG
+    img = Image.fromarray((rgba_img * 255).astype(np.uint8))
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        img.save(tmp, format="PNG")
+        temp_path = tmp.name
 
-        img = Image.fromarray(rgba_8bit)
-        buf = BytesIO()
-        img.save(buf, format="PNG")
-        b64_img = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return temp_path, bounds
 
-        bounds_sw = [bounds.bottom, bounds.left]
-        bounds_ne = [bounds.top, bounds.right]
 
+def add_raster_to_map(m, uploaded_file, layer_name="Raster Overlay", opacity=0.7):
+    """
+    Overlay a raster from uploaded bytes, wrapped in a FeatureGroup for smoother behavior.
+    Uses caching to avoid re-encoding the same raster on reruns.
+    """
+    try:
+        # --- Cache setup ---
+        if "raster_overlays" not in st.session_state:
+            st.session_state.raster_overlays = {}
+
+        # --- Load bytes and check cache ---
+        file_bytes = uploaded_file.getvalue()
+        if uploaded_file.name in st.session_state.raster_overlays:
+            temp_path, bounds = st.session_state.raster_overlays[uploaded_file.name]
+        else:
+            temp_path, bounds = raster_to_png_path(
+                file_bytes,
+                uploaded_file.name,
+                st.session_state.get("colormap", "viridis"),
+            )
+            st.session_state.raster_overlays[uploaded_file.name] = (temp_path, bounds)
+
+        # --- Wrap overlay in a FeatureGroup (for smoother handling) ---
+        fg_raster = fl.FeatureGroup(name=f"{uploaded_file.name}")
         fl.raster_layers.ImageOverlay(
-            image=f"data:image/png;base64,{b64_img}",
-            bounds=[bounds_sw, bounds_ne],
+            image=temp_path,
+            bounds=[[bounds.bottom, bounds.left], [bounds.top, bounds.right]],
             opacity=opacity,
             name=layer_name,
-        ).add_to(m)
+            interactive=False,
+            cross_origin=False,
+            zindex=1,
+        ).add_to(fg_raster)
+
+        fg_raster.add_to(m)
 
     except Exception as e:
         st.warning(f"⚠️ Could not render raster overlay: {e}")
 
 
-def add_boundary_to_map(m, uploaded_file, layer_name="Boundary", color="#ff7800", center=False):
+def add_boundary_to_map(
+    m, uploaded_file, layer_name="Boundary", color="#ff7800", center=False
+):
     """Add boundary polygons from uploaded file (gpkg, geojson, or zipped shapefile)."""
     try:
         gdf = read_boundary(uploaded_file)
@@ -256,7 +287,8 @@ def render_sidebar():
         # Store selections
         st.session_state.rho = rho
         st.session_state.colormap = colormap
-        st.session_state.uploaded_rasters = uploaded_rasters
+        if uploaded_rasters:
+            st.session_state.uploaded_rasters = uploaded_rasters
         st.session_state.uploaded_boundary = uploaded_boundary
         st.session_state.iso4app_type = iso_type
         st.session_state.iso4app_mobility = mobility
@@ -268,22 +300,6 @@ def render_sidebar():
         # ---------------------------
         if uploaded_rasters:
             st.success(f"✅ Loaded {len(uploaded_rasters)} raster(s)")
-
-            try:
-                first_raster = uploaded_rasters[0]
-                dataset = read_raster(first_raster)
-                bounds = dataset.bounds
-                center = (
-                    (bounds.top + bounds.bottom) / 2,
-                    (bounds.left + bounds.right) / 2,
-                )
-                dataset.close()
-
-                st.session_state.coord_center = center
-                st.info(f"📍 Centered map on raster ({center[0]:.4f}, {center[1]:.4f})")
-
-            except Exception as e:
-                st.warning(f"⚠️ Could not compute raster center: {e}")
 
         # ---------------------------
         # BOUNDARY CENTERING
@@ -373,6 +389,10 @@ def draw_map():
     if st.session_state.get("uploaded_boundary"):
         boundary_data = st.session_state.uploaded_boundary
         add_boundary_to_map(m, boundary_data, layer_name="Boundary", color="#ff6600")
+
+    # --- Toggle rasters based on file name
+    ## TODO: Add if necessary
+    # fl.LayerControl(collapsed=False).add_to(m)
 
     # --- Compute map center and zoom ---
     if hasattr(st.session_state, "coord_center"):
