@@ -159,7 +159,7 @@ def add_raster_to_map(m, uploaded_file, layer_name="Raster Overlay", opacity=0.7
         st.warning(f"⚠️ Could not render raster overlay: {e}")
 
 
-def add_boundary_to_map(m, uploaded_file, layer_name="Boundary", color="#ff7800"):
+def add_boundary_to_map(m, uploaded_file, layer_name="Boundary", color="#ff7800", center=False):
     """Add boundary polygons from uploaded file (gpkg, geojson, or zipped shapefile)."""
     try:
         gdf = read_boundary(uploaded_file)
@@ -180,10 +180,11 @@ def add_boundary_to_map(m, uploaded_file, layer_name="Boundary", color="#ff7800"
         ).add_to(m)
 
         # Center map
-        gdf_proj = gdf.to_crs(3857)
-        centroid = gdf_proj.geometry.union_all().centroid
-        centroid_wgs84 = gpd.GeoSeries([centroid], crs=3857).to_crs(4326).iloc[0]
-        st.session_state.coord_center = (centroid_wgs84.y, centroid_wgs84.x)
+        if center:
+            gdf_proj = gdf.to_crs(3857)
+            centroid = gdf_proj.geometry.union_all().centroid
+            centroid_wgs84 = gpd.GeoSeries([centroid], crs=3857).to_crs(4326).iloc[0]
+            st.session_state.coord_center = (centroid_wgs84.y, centroid_wgs84.x)
 
     except Exception as e:
         st.warning(f"⚠️ Could not render boundary overlay: {e}")
