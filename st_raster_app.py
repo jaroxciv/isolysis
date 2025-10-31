@@ -295,18 +295,6 @@ def render_sidebar():
             )
             st.success(f"✅ Loaded boundary file(s): {', '.join(file_names)}")
 
-            try:
-                gdf = read_boundary(uploaded_boundary)
-                if gdf is not None and not gdf.empty:
-                    gdf_proj = gdf.to_crs(3857)
-                    centroid = gdf_proj.geometry.union_all().centroid
-                    centroid_wgs84 = (
-                        gpd.GeoSeries([centroid], crs=3857).to_crs(4326).iloc[0]
-                    )
-                    st.session_state.coord_center = (centroid_wgs84.y, centroid_wgs84.x)
-            except Exception as e:
-                st.warning(f"⚠️ Could not auto-center on boundary: {e}")
-
     return rho, colormap
 
 
