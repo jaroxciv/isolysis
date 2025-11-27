@@ -10,6 +10,8 @@ services:
     environment:
       - MAPBOX_API_KEY=${MAPBOX_API_KEY:-}
       - ISO4APP_API_KEY=${ISO4APP_API_KEY:-}
+    volumes:
+      - shared-data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -32,6 +34,8 @@ services:
       - API_URL=http://api:8000
       - MAPBOX_API_KEY=${MAPBOX_API_KEY:-}
       - ISO4APP_API_KEY=${ISO4APP_API_KEY:-}
+    volumes:
+      - shared-data:/app/data
     depends_on:
       api:
         condition: service_healthy
@@ -51,6 +55,8 @@ services:
       - API_URL=http://api:8000
       - MAPBOX_API_KEY=${MAPBOX_API_KEY:-}
       - ISO4APP_API_KEY=${ISO4APP_API_KEY:-}
+    volumes:
+      - shared-data:/app/data
     command: ["uv", "run", "streamlit", "run", "st_raster_app.py", "--server.address", "0.0.0.0", "--server.port", "8502"]
     depends_on:
       api:
@@ -58,6 +64,10 @@ services:
     restart: unless-stopped
     networks:
       - isolysis-network
+
+volumes:
+  shared-data:
+    driver: local
 
 networks:
   isolysis-network:
