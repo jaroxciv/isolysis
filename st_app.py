@@ -82,8 +82,8 @@ def build_feature_group():
                 popup=f"""
                 <b>Lat</b>: {coord.lat:.5f}<br>
                 <b>Lon</b>: {coord.lon:.5f}<br>
-                <b>Region</b>: {coord.region or 'N/A'}<br>
-                <b>Municipality</b>: {coord.municipality or 'N/A'}
+                <b>Region</b>: {coord.region or "N/A"}<br>
+                <b>Municipality</b>: {coord.municipality or "N/A"}
                 """,
                 tooltip=label,
                 color="black",
@@ -119,11 +119,15 @@ def build_feature_group():
             }
 
             if geojson_feature["geometry"]["type"] in ["Polygon", "MultiPolygon"]:
+                # Remove tooltip to allow clicks to pass through
                 geojson_layer = fl.GeoJson(
                     geojson_feature,
                     style_function=style_func,
-                    popup=popup_text,
-                    tooltip=tooltip_text,
+                    # popup=popup_text,
+                    # tooltip=tooltip_text,  # Disabled to allow click-through
+                    control=True,
+                    overlay=True,
+                    show=True,
                 )
                 fg.add_child(geojson_layer)
 
@@ -370,7 +374,9 @@ def handle_map_click(map_data, provider, rho):
                         st.rerun()
 
     else:
-        st.info("👆 Click on the map to see coordinates")
+        st.info(
+            "👆 Click anywhere on the map to add a center (you can click on existing isochrones too)"
+        )
 
 
 def render_center_controls():
