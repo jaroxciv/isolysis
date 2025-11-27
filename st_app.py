@@ -202,16 +202,18 @@ def render_sidebar():
         )
         st.session_state.provider = provider
 
-        # Travel time (rho)
-        rho = st.slider(
-            "Travel Time (hours)",
-            min_value=1.0,
-            max_value=10.0,
-            value=1.0,
-            step=0.5,
+        # Travel time (rho) - in minutes for UI, converted to hours for API
+        rho_minutes = st.slider(
+            "Travel Time (minutes)",
+            min_value=5,
+            max_value=60,
+            value=30,
+            step=5,
             help="Maximum travel time from center",
         )
+        rho = rho_minutes / 60.0  # Convert to hours for API
         st.session_state.rho = rho
+        st.session_state.rho_minutes = rho_minutes
 
         # Iso4App-specific options
         if provider == "iso4app":
@@ -270,7 +272,7 @@ def render_sidebar():
         st.markdown("---")
         st.write(f"**Settings:**")
         st.write(f"Provider: {provider}")
-        st.write(f"Travel time: {rho}h")
+        st.write(f"Travel time: {rho_minutes} min")
 
         if provider == "iso4app":
             st.write(f"Type: {iso_type}")
@@ -328,7 +330,17 @@ def process_isochrone_request(center_name, lat, lng, rho, provider):
                 )
 
             if bands_data:
-                st.session_state.isochrones[center_name] = {"bands": bands_data}
+                # Store isochrone with metadata
+                speed_kph = payload["options"].get("iso4app_speed_limit") or payload[
+                    "options"
+                ].get("travel_speed_kph", 25)
+                st.session_state.isochrones[center_name] = {
+                    "bands": bands_data,
+                    "rho": rho,
+                    "rho_minutes": int(rho * 60),
+                    "speed_kph": speed_kph,
+                    "provider": provider,
+                }
                 cache_msg = " (cached)" if cached else ""
                 band_count = len(bands_data)
                 st.success(
@@ -415,14 +427,11 @@ def render_center_controls():
                 name in st.session_state.isochrones
                 and "bands" in st.session_state.isochrones[name]
             ):
-                # Sort by actual hours value, then format for display
-                sorted_bands = sorted(
-                    st.session_state.isochrones[name]["bands"],
-                    key=lambda x: x["band_hours"],
-                )
-                # FIXED: Create proper time labels for each band
-                band_times = [b["band_label"] for b in sorted_bands]
-                bands_info = f" - Bands: {', '.join(band_times)}"
+                iso_data = st.session_state.isochrones[name]
+                num_bands = len(iso_data["bands"])
+                rho_min = iso_data.get("rho_minutes", int(iso_data.get("rho", 1) * 60))
+                speed = iso_data.get("speed_kph", "N/A")
+                bands_info = f" - {num_bands} band(s) | {rho_min}min @ {speed} km/h"
 
             st.write(
                 f"**{name}:** {coords['lat']:.5f}, {coords['lng']:.5f}{bands_info}"
