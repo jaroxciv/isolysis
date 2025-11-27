@@ -147,7 +147,9 @@ def raster_to_png_path(_file_bytes: bytes, _name: str, colormap="viridis"):
     return temp_path, bounds
 
 
-def add_raster_to_map(m, uploaded_file, layer_name="Raster Overlay", opacity=0.7):
+def add_raster_to_feature_group(
+    fg, uploaded_file, layer_name="Raster Overlay", opacity=0.7
+):
     """
     Overlay a raster from uploaded bytes, wrapped in a FeatureGroup for smoother behavior.
     Uses caching to avoid re-encoding the same raster on reruns.
@@ -170,7 +172,6 @@ def add_raster_to_map(m, uploaded_file, layer_name="Raster Overlay", opacity=0.7
             st.session_state.raster_overlays[uploaded_file.name] = (temp_path, bounds)
 
         # --- Wrap overlay in a FeatureGroup (for smoother handling) ---
-        fg_raster = fl.FeatureGroup(name=f"{uploaded_file.name}")
         fl.raster_layers.ImageOverlay(
             image=temp_path,
             bounds=[[bounds.bottom, bounds.left], [bounds.top, bounds.right]],
@@ -179,9 +180,7 @@ def add_raster_to_map(m, uploaded_file, layer_name="Raster Overlay", opacity=0.7
             interactive=False,
             cross_origin=False,
             zindex=1,
-        ).add_to(fg_raster)
-
-        fg_raster.add_to(m)
+        ).add_to(fg)
 
     except Exception as e:
         st.warning(f"⚠️ Could not render raster overlay: {e}")
@@ -405,7 +404,9 @@ def draw_map():
     # --- Overlay first raster if available ---
     if st.session_state.uploaded_rasters:
         first_raster = st.session_state.uploaded_rasters[0]
-        add_raster_to_map(m, first_raster, layer_name=first_raster.name, opacity=0.6)
+        add_raster_to_feature_group(
+            fg, first_raster, layer_name=first_raster.name, opacity=0.6
+        )
 
     # --- Toggle rasters based on file name
     ## TODO: Add if necessary
