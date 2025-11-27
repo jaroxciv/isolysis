@@ -39,6 +39,26 @@ services:
     networks:
       - isolysis-network
 
+  streamlit-raster:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: streamlit
+    container_name: isolysis-streamlit-raster
+    ports:
+      - "8502:8502"
+    environment:
+      - API_URL=http://api:8000
+      - MAPBOX_API_KEY=${MAPBOX_API_KEY:-}
+      - ISO4APP_API_KEY=${ISO4APP_API_KEY:-}
+    command: ["uv", "run", "streamlit", "run", "st_raster_app.py", "--server.address", "0.0.0.0", "--server.port", "8502"]
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - isolysis-network
+
 networks:
   isolysis-network:
     driver: bridge
