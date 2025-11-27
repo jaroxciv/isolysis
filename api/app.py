@@ -1,5 +1,7 @@
 import json
 import os
+import tomllib
+from pathlib import Path
 from typing import Optional
 
 from dotenv import find_dotenv, load_dotenv
@@ -21,6 +23,16 @@ from isolysis.utils import harmonize_isochrones_columns
 # ---------- ENV SETUP ----------
 load_dotenv(find_dotenv(usecwd=True), override=True)
 
+# ---------- READ PROJECT METADATA ----------
+def get_project_metadata():
+    """Read project metadata from pyproject.toml"""
+    pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
+    with open(pyproject_path, "rb") as f:
+        data = tomllib.load(f)
+    return data["project"]
+
+PROJECT_METADATA = get_project_metadata()
+
 
 def validate_provider_keys(provider: ProviderName) -> Optional[str]:
     """Check if required API keys are present"""
@@ -34,8 +46,8 @@ def validate_provider_keys(provider: ProviderName) -> Optional[str]:
 # ---------- FASTAPI APP ----------
 app = FastAPI(
     title="Isolysis Isochrone API",
-    version="0.2.0",
-    description="Isochrone computation API with spatial analysis capabilities",
+    version=PROJECT_METADATA["version"],
+    description=PROJECT_METADATA["description"],
 )
 
 app.add_middleware(
