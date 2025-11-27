@@ -1,32 +1,31 @@
-import os
-import json
-import rasterio
-import tempfile
-import streamlit as st
-import folium as fl
-import numpy as np
-import geopandas as gpd
-import matplotlib.pyplot as plt
-from streamlit_folium import st_folium
-from dotenv import find_dotenv, load_dotenv
-
 import base64
-from PIL import Image
-from io import BytesIO
-
-from api.utils import (
-    call_api,
-    format_time_display,
-    get_map_center,
-    get_band_color,
-    get_pos,
-)
-
+import json
+import os
+import tempfile
 
 # ---------------------------
 # TEMP DIR SETUP (shared path for Streamlit + API)
 # ---------------------------
 import warnings
+from io import BytesIO
+
+import folium as fl
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import numpy as np
+import rasterio
+import streamlit as st
+from dotenv import find_dotenv, load_dotenv
+from PIL import Image
+from streamlit_folium import st_folium
+
+from api.utils import (
+    call_api,
+    format_time_display,
+    get_band_color,
+    get_map_center,
+    get_pos,
+)
 
 warnings.filterwarnings("ignore", message=".*GPKG application_id.*")
 
@@ -369,7 +368,8 @@ def draw_map():
         for band in data["bands"]:
             geo = band["geojson_feature"]
             fill, border = get_band_color(0, 1, st.session_state.colormap)
-            fl.GeoJson(
+            # Remove popup to avoid blocking clicks, keep tooltip for hover info
+            geojson_layer = fl.GeoJson(
                 geo,
                 style_function=lambda x, fill=fill, border=border: {
                     "fillColor": fill,
@@ -378,8 +378,12 @@ def draw_map():
                     "fillOpacity": 0.4,
                     "opacity": 0.8,
                 },
-                tooltip=f"{cname} - {band['band_label']}",
-            ).add_to(fg)
+                # tooltip=f"{cname} - {band['band_label']}",
+                control=True,
+                overlay=True,
+                show=True,
+            )
+            geojson_layer.add_to(fg)
 
     # --- Overlay first raster if available ---
     if st.session_state.uploaded_rasters:
@@ -421,7 +425,7 @@ def handle_map_click(map_data):
     lat, lon = get_pos(map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"])
     st.success(f"📍 Clicked: {lat:.5f}, {lon:.5f}")
     if st.button("➕ Add Isochrone Here"):
-        cname = f"Center{len(st.session_state.isochrones)+1}"
+        cname = f"Center{len(st.session_state.isochrones) + 1}"
         with st.spinner(f"Computing isochrone for {cname}..."):
             bands = process_isochrone(cname, lat, lon, st.session_state.rho)
             if bands:
