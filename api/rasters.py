@@ -1,18 +1,17 @@
 import os
 from itertools import combinations
-from typing import Dict, List, Any
+from typing import Any, Dict, List
+
+import geopandas as gpd
+import pandas as pd
+import rasterio
 from fastapi import APIRouter, HTTPException
 from loguru import logger
-
-import rasterio
-import pandas as pd
-import geopandas as gpd
 from rasterstats import zonal_stats
-from shapely.geometry import shape
 from shapely import intersection_all
+from shapely.geometry import shape
 
 from api.utils import resolve_project_path
-
 
 router = APIRouter(prefix="/raster-stats", tags=["Raster Analysis"])
 
@@ -115,13 +114,13 @@ def _compute_intersection_stats(iso_gdf: gpd.GeoDataFrame, raster_path: str):
 
         logger.info(
             f"Completed {r}-way intersections → "
-            f"{len([i for i in intersections if i['type']==f'{r}-way'])} valid"
+            f"{len([i for i in intersections if i['type'] == f'{r}-way'])} valid"
         )
 
     total_area = sum(i.get("area_km2", 0) or 0 for i in intersections)
     logger.info(
         f"Finished intersection analysis → total={len(intersections)} "
-        f"({sum(1 for i in intersections if i['type']=='2-way')} two-way, "
+        f"({sum(1 for i in intersections if i['type'] == '2-way')} two-way, "
         f"{sum(1 for i in intersections if '3-way' in i['type'])} three-way+), "
         f"aggregate area={total_area:.3f} km²"
     )
@@ -141,6 +140,7 @@ def _compute_stats_for_geometries(
             continue
 
         logger.info(f"Processing raster: {os.path.basename(raster_path)}")
+        logger.debug(f"GDF columns: {gdf.columns}")
         for idx, row in gdf.iterrows():
             geom = row.geometry
             stats = _compute_stats_for_polygon(geom, raster_path)
@@ -148,8 +148,9 @@ def _compute_stats_for_geometries(
             name = (
                 row.get("centroid_id")
                 or row.get("name")
-                or row.get("NAME_1")
+                or row.get("NAME_3")
                 or row.get("NAME_2")
+                or row.get("NAME_1")
                 or f"Feature_{idx}"
             )
             results.append(
