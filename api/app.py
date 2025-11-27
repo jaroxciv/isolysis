@@ -23,6 +23,7 @@ from isolysis.utils import harmonize_isochrones_columns
 # ---------- ENV SETUP ----------
 load_dotenv(find_dotenv(usecwd=True), override=True)
 
+
 # ---------- READ PROJECT METADATA ----------
 def get_project_metadata():
     """Read project metadata from pyproject.toml"""
@@ -31,6 +32,8 @@ def get_project_metadata():
         data = tomllib.load(f)
     return data["project"]
 
+
+PROJECT_TITLE = "Isolysis Isochrone API"
 PROJECT_METADATA = get_project_metadata()
 
 
@@ -45,7 +48,7 @@ def validate_provider_keys(provider: ProviderName) -> Optional[str]:
 
 # ---------- FASTAPI APP ----------
 app = FastAPI(
-    title="Isolysis Isochrone API",
+    title=PROJECT_TITLE,
     version=PROJECT_METADATA["version"],
     description=PROJECT_METADATA["description"],
 )
@@ -67,8 +70,8 @@ app.include_router(rasters.router)
 def root():
     """API information"""
     return {
-        "name": "Isolysis Isochrone API",
-        "version": "0.2.0",
+        "name": PROJECT_TITLE,
+        "version": PROJECT_METADATA["version"],
         "docs": "/docs",
         "health": "/health",
         "features": [
