@@ -3,7 +3,7 @@ FROM python:3.12-slim AS base
 
 WORKDIR /app
 
-# Switch APT sources to HTTPS for Debian Bookworm+ and install common system deps
+# Switch APT sources to HTTPS for Debian Bookworm+ and install system deps (including geospatial libraries)
 RUN find /etc/apt/sources.list.d/ -type f -name "*.sources" \
         -exec sed -i 's|http://deb.debian.org|https://deb.debian.org|g' {} \; && \
     apt-get update && apt-get install -y \
@@ -11,6 +11,12 @@ RUN find /etc/apt/sources.list.d/ -type f -name "*.sources" \
         gcc \
         g++ \
         curl \
+        libffi-dev \
+        gdal-bin \
+        libgdal-dev \
+        libspatialindex-dev \
+        libgeos-dev \
+        libproj-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -39,7 +45,7 @@ FROM base AS streamlit
 # Copy application code
 COPY api/ ./api/
 COPY isolysis/ ./isolysis/
-COPY st_app.py ./
+COPY st_*.py ./
 COPY .env* ./
 
 EXPOSE 8501
