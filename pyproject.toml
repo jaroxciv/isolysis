@@ -1,6 +1,6 @@
 [project]
 name = "isolysis"
-version = "0.3.0"
+version = "0.3.1"
 description = "Isochrone computation API with spatial analysis capabilities"
 readme = "README.md"
 requires-python = ">=3.13"
