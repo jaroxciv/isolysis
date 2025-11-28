@@ -140,7 +140,7 @@ def _compute_stats_for_geometries(
             continue
 
         logger.info(f"Processing raster: {os.path.basename(raster_path)}")
-        logger.debug(f"GDF columns: {gdf.columns}")
+        logger.debug(f"Boundary GDF columns: {gdf.columns.tolist()}")
         for idx, row in gdf.iterrows():
             geom = row.geometry
             stats = _compute_stats_for_polygon(geom, raster_path)
