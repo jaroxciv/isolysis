@@ -1,5 +1,3 @@
-import base64
-import json
 import os
 import tempfile
 
@@ -206,9 +204,7 @@ def add_boundary_to_feature_group(
                 "opacity": 0.8,
             },
             # tooltip=layer_name,
-        ).add_to(
-            fg
-        )  # Add to FeatureGroup instead of map
+        ).add_to(fg)  # Add to FeatureGroup instead of map
 
         # Center map
         if center:
@@ -277,6 +273,7 @@ def render_sidebar():
             "📂 Upload Raster(s) (.tif)",
             type=["tif", "tiff"],
             accept_multiple_files=True,
+            key=f"raster_uploader_{st.session_state.raster_uploader_key}",
         )
 
         # Boundary upload
@@ -543,6 +540,8 @@ def main():
         st.session_state.uploaded_rasters = []
     if "raster_results" not in st.session_state:
         st.session_state.raster_results = None
+    if "raster_uploader_key" not in st.session_state:
+        st.session_state.raster_uploader_key = 0
     render_sidebar()
     st.title("📈 Iso-Raster Analysis")
     st.caption("Compute raster statistics inside isochrones and their intersections.")
@@ -573,7 +572,7 @@ def main():
         or st.session_state.get("uploaded_rasters")
     ):
         st.markdown("---")
-        col1, col2, col3 = st.columns([1, 1, 1])
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 
         with col1:
             if st.session_state.isochrones and st.button("🗑️ Clear Isochrones"):
@@ -592,6 +591,17 @@ def main():
                 st.rerun()
 
         with col3:
+            if st.session_state.get("uploaded_rasters") and st.button(
+                "🗑️ Clear Rasters"
+            ):
+                raster_count = len(st.session_state.uploaded_rasters)
+                st.session_state.uploaded_rasters = []
+                st.session_state.raster_overlays = {}
+                st.session_state.raster_uploader_key += 1  # Reset the uploader
+                st.toast(f"Cleared {raster_count} raster(s)")
+                st.rerun()
+
+        with col4:
             if (
                 st.session_state.isochrones
                 or st.session_state.get("uploaded_boundary")
@@ -603,6 +613,7 @@ def main():
                 st.session_state.boundary_uploader_key += 1  # Reset the uploader
                 st.session_state.uploaded_rasters = []
                 st.session_state.raster_overlays = {}
+                st.session_state.raster_uploader_key += 1  # Reset the uploader
                 st.toast(
                     f"Cleared everything ({iso_count} isochrones, boundary, rasters)"
                 )
