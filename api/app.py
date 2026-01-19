@@ -204,11 +204,23 @@ def compute_isochrones_endpoint(request: IsochroneRequest):
     if request.pois and all_isochrone_records:
         try:
             logger.info("Computing spatial analysis...")
+            # Build max_production mapping from centroids
+            max_production_by_centroid = {}
+            for centroid in request.centroids:
+                centroid_id = (
+                    centroid.id or f"centroid_{request.centroids.index(centroid)}"
+                )
+                if centroid.max_production is not None:
+                    max_production_by_centroid[centroid_id] = centroid.max_production
+
             spatial_analysis = analyze_isochrones_with_pois(
                 all_isochrone_records,
                 request.pois,
                 min_overlap=2,  # Configurable parameters
                 max_combinations=100,
+                max_production_by_centroid=max_production_by_centroid
+                if max_production_by_centroid
+                else None,
             )
             logger.success(
                 f"Spatial analysis completed: {spatial_analysis.global_coverage_percentage:.1f}% coverage, "

@@ -1,16 +1,15 @@
-import uuid
 import json
-import requests
+import uuid
 from typing import Dict, List, Optional, Tuple
 
-import rasterio
-import pandas as pd
 import folium as fl
+import pandas as pd
+import rasterio
+import requests
 import streamlit as st
 from loguru import logger
 
 from isolysis.io import Coordinate
-
 
 REQUIRED_COLUMNS = {"Categoria", "Subcategoria", "Nombre", "Latitud", "Longitud"}
 
@@ -169,6 +168,7 @@ def _parse_tabular_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
     """
     Parse coordinates from CSV or XLSX files.
     Requires columns: Categoria, Subcategoria, Nombre, Latitude, Longitud.
+    Optional column: Prod (production value for viability checking).
     """
     try:
         file_name = uploaded_file.name.lower()
@@ -196,14 +196,21 @@ def _parse_tabular_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
         df["Categoria"] = df["Categoria"].astype(str).str.strip()
         df["Subcategoria"] = df["Subcategoria"].astype(str).str.strip()
 
+        # Handle optional Prod column
+        has_prod = "Prod" in df.columns
+        if has_prod:
+            df["Prod"] = df["Prod"].apply(_to_float)
+            logger.info("📊 Found 'Prod' column - production values will be included")
+
         df = df.dropna(subset=["Latitud", "Longitud"])
         df = df[(df["Latitud"].between(-90, 90)) & (df["Longitud"].between(-180, 180))]
 
         coordinates = []
         for i, row in df.iterrows():
+            prod_value = float(row.get("Prod", 0) or 0) if has_prod else 0.0
             coordinates.append(
                 Coordinate(
-                    id=f"poi_{i+1}",
+                    id=f"poi_{i + 1}",
                     name=row["Nombre"],
                     lat=row["Latitud"],
                     lon=row["Longitud"],
@@ -212,6 +219,7 @@ def _parse_tabular_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
                     metadata={
                         "Categoria": row["Categoria"],
                         "Subcategoria": row["Subcategoria"],
+                        "Prod": prod_value,
                     },
                 )
             )

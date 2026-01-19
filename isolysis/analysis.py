@@ -1,6 +1,6 @@
 from datetime import datetime
 from itertools import combinations
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional
 
 import geopandas as gpd
 import pandas as pd
@@ -53,11 +53,18 @@ def pois_to_geodataframe(pois: List[POI]) -> gpd.GeoDataFrame:
 
 
 def compute_band_coverage(
-    isochrones_gdf: gpd.GeoDataFrame, pois_gdf: gpd.GeoDataFrame
+    isochrones_gdf: gpd.GeoDataFrame,
+    pois_gdf: gpd.GeoDataFrame,
+    max_production_by_centroid: Optional[Dict[str, float]] = None,
 ) -> List[BandCoverage]:
     """
     Compute coverage analysis for each isochrone band
     Fast implementation inspired by legacy analyze_isochrone_coverage()
+
+    Args:
+        isochrones_gdf: GeoDataFrame with isochrone polygons
+        pois_gdf: GeoDataFrame with POI points
+        max_production_by_centroid: Dict mapping centroid_id to max_production threshold
     """
     if pois_gdf.empty:
         logger.warning("No POIs provided for coverage analysis")
@@ -69,6 +76,7 @@ def compute_band_coverage(
 
     coverage_results = []
     total_pois = len(pois_gdf)
+    max_production_by_centroid = max_production_by_centroid or {}
 
     for idx, row in isochrones_gdf.iterrows():
         centroid_id = row.get("centroid_id") or row.get("id")
@@ -83,8 +91,22 @@ def compute_band_coverage(
         coverage_percentage = (poi_count / total_pois * 100) if total_pois > 0 else 0.0
         band_label = format_time_display(band_hours)
 
+        # Sum production values from POI metadata
+        production_sum = 0.0
+        if "metadata" in matches.columns:
+            for _, poi_row in matches.iterrows():
+                meta = poi_row.get("metadata") or {}
+                production_sum += float(meta.get("Prod", 0) or 0)
+
+        # Calculate viability using per-centroid max_production
+        viable = None
+        max_production = max_production_by_centroid.get(centroid_id)
+        if max_production is not None and max_production > 0:
+            viable = production_sum <= max_production
+
         logger.debug(
-            f"Isochrone {centroid_id} band {band_hours}h: {poi_count} points inside"
+            f"Isochrone {centroid_id} band {band_hours}h: {poi_count} points inside, "
+            f"production_sum={production_sum:.1f}, max_production={max_production}, viable={viable}"
         )
 
         coverage = BandCoverage(
@@ -94,6 +116,8 @@ def compute_band_coverage(
             poi_count=poi_count,
             poi_ids=poi_ids,
             coverage_percentage=coverage_percentage,
+            production_sum=production_sum,
+            viable=viable,
         )
 
         coverage_results.append(coverage)
@@ -382,6 +406,7 @@ def compute_spatial_analysis(
     pois: List[POI],
     min_overlap: int = 2,
     max_combinations: int = 100,
+    max_production_by_centroid: Optional[Dict[str, float]] = None,
 ) -> SpatialAnalysisResult:
     """
     Complete spatial analysis combining coverage and intersection analysis
@@ -422,7 +447,9 @@ def compute_spatial_analysis(
 
     # Compute band coverage
     logger.debug("Computing band coverage...")
-    band_coverages = compute_band_coverage(isochrones_gdf, pois_gdf)
+    band_coverages = compute_band_coverage(
+        isochrones_gdf, pois_gdf, max_production_by_centroid
+    )
 
     # Compute centroid coverage
     logger.debug("Computing centroid coverage...")
@@ -505,6 +532,7 @@ def analyze_isochrones_with_pois(
     pois: List[POI],
     min_overlap: int = 2,
     max_combinations: int = 100,
+    max_production_by_centroid: Optional[Dict[str, float]] = None,
 ) -> SpatialAnalysisResult:
     """
     High-level function to analyze isochrones with POIs
@@ -521,4 +549,6 @@ def analyze_isochrones_with_pois(
     logger.debug(f"Harmonized {len(isochrones_gdf)} isochrone records")
 
     # Perform spatial analysis
-    return compute_spatial_analysis(isochrones_gdf, pois, min_overlap, max_combinations)
+    return compute_spatial_analysis(
+        isochrones_gdf, pois, min_overlap, max_combinations, max_production_by_centroid
+    )

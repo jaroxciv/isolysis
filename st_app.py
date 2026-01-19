@@ -420,7 +420,18 @@ def render_center_controls():
                 st.session_state.isochrones = {}
                 st.success(f"🗑️ Cleared {center_count} centers & {poly_count} polygons")
 
-        # List all centers with band information
+        # Build production sum lookup from analysis results if available
+        prod_sum_by_center = {}
+        if hasattr(st.session_state, "analysis_result"):
+            for cov in st.session_state.analysis_result.get("coverage_analysis", []):
+                center_id = cov.get("centroid_id")
+                # Sum production from all bands (usually just 1)
+                total_prod = sum(
+                    band.get("production_sum", 0) or 0 for band in cov.get("bands", [])
+                )
+                prod_sum_by_center[center_id] = total_prod
+
+        # List all centers with band information and max_production input
         for name, coords in st.session_state.centers.items():
             bands_info = ""
             if (
@@ -433,9 +444,29 @@ def render_center_controls():
                 speed = iso_data.get("speed_kph", "N/A")
                 bands_info = f" - {num_bands} band(s) | {rho_min}min @ {speed} km/h"
 
-            st.write(
-                f"**{name}:** {coords['lat']:.5f}, {coords['lng']:.5f}{bands_info}"
-            )
+            # Add production sum if available
+            prod_sum_info = ""
+            if name in prod_sum_by_center:
+                prod_sum_info = f" | Prod: {prod_sum_by_center[name]:.1f}"
+
+            col_info, col_max_prod = st.columns([3, 1])
+            with col_info:
+                st.write(
+                    f"**{name}:** {coords['lat']:.5f}, {coords['lng']:.5f}{bands_info}{prod_sum_info}"
+                )
+            with col_max_prod:
+                current_max_prod = coords.get("max_production", 0.0)
+                new_max_prod = st.number_input(
+                    "Max Prod",
+                    min_value=0.0,
+                    value=float(current_max_prod),
+                    step=100.0,
+                    key=f"max_prod_{name}",
+                    label_visibility="collapsed",
+                    help=f"Max production for {name}",
+                )
+                if new_max_prod != current_max_prod:
+                    st.session_state.centers[name]["max_production"] = new_max_prod
 
 
 # -------------------------
@@ -446,12 +477,20 @@ def send_analysis_request(provider, rho):
     if not st.session_state.centers:
         return None
 
-    # Prepare centroids from current centers
+    # Prepare centroids from current centers (including per-center max_production)
     centroids = []
     for name, coords in st.session_state.centers.items():
-        centroids.append(
-            {"lat": coords["lat"], "lon": coords["lng"], "rho": rho, "id": name}
-        )
+        centroid_data = {
+            "lat": coords["lat"],
+            "lon": coords["lng"],
+            "rho": rho,
+            "id": name,
+        }
+        # Include max_production if set (> 0)
+        max_prod = coords.get("max_production", 0.0)
+        if max_prod > 0:
+            centroid_data["max_production"] = max_prod
+        centroids.append(centroid_data)
 
     # Prepare POIs from uploaded coordinates
     pois = []
@@ -465,6 +504,7 @@ def send_analysis_request(provider, rho):
                     "name": coord.name,
                     "region": coord.region,
                     "municipality": coord.municipality,
+                    "metadata": coord.metadata,
                 }
             )
 
@@ -554,31 +594,49 @@ def render_analysis_summary(analysis):
 
 
 def render_coverage_analysis(coverage_analysis):
-    """Render coverage analysis per center"""
-    st.subheader("🎯 Coverage by Center")
+    """Render coverage analysis in a single combined table"""
+    st.subheader("🎯 Coverage Analysis")
 
+    # Build combined table data from all centers
+    table_data = []
     for centroid_coverage in coverage_analysis:
         center_id = centroid_coverage["centroid_id"]
-        total_pois = centroid_coverage["total_unique_pois"]
+        for band in centroid_coverage["bands"]:
+            # Determine viable display value
+            viable_value = band.get("viable")
+            if viable_value is True:
+                viable_display = "✅ Yes"
+            elif viable_value is False:
+                viable_display = "❌ No"
+            else:
+                viable_display = "-"
 
-        with st.expander(f"📍 {center_id} - {total_pois} POIs covered"):
-            # Show bands in a clean table
-            band_data = []
-            for band in centroid_coverage["bands"]:
-                band_data.append(
-                    {
-                        "Time Band": band["band_label"],
-                        "POIs Covered": band["poi_count"],
-                        "Coverage %": f"{band['coverage_percentage']:.1f}%",
-                    }
-                )
+            table_data.append(
+                {
+                    "Center": center_id,
+                    "Time Band": band["band_label"],
+                    "POIs Covered": band["poi_count"],
+                    "Coverage %": f"{band['coverage_percentage']:.1f}%",
+                    "Prod Sum": f"{band.get('production_sum', 0):.1f}",
+                    "Viable": viable_display,
+                }
+            )
 
-            if band_data:
-                st.dataframe(band_data, use_container_width=True, hide_index=True)
+    if table_data:
+        st.dataframe(table_data, use_container_width=True, hide_index=True)
 
-            # Best performing band
-            if centroid_coverage["max_coverage_band"]:
-                st.info(f"🏆 Best band: **{centroid_coverage['max_coverage_band']}**")
+        # Summary stats
+        total_centers = len(coverage_analysis)
+        viable_count = sum(1 for row in table_data if "Yes" in row["Viable"])
+        not_viable_count = sum(1 for row in table_data if "No" in row["Viable"])
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Centers", total_centers)
+        with col2:
+            st.metric("Viable", viable_count)
+        with col3:
+            st.metric("Not Viable", not_viable_count)
 
 
 def render_intersection_analysis(intersection_analysis):

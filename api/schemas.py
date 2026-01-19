@@ -14,6 +14,9 @@ class CentroidRequest(BaseModel):
     lon: float = Field(..., ge=-180, le=180, description="Longitude")
     rho: float = Field(..., gt=0, description="Travel time in hours")
     id: Optional[str] = Field(None, description="Centroid identifier")
+    max_production: Optional[float] = Field(
+        None, description="Max production threshold for this centroid"
+    )
 
 
 class ComputeOptions(BaseModel):
@@ -82,6 +85,12 @@ class BandCoverage(BaseModel):
     )
     coverage_percentage: Optional[float] = Field(
         None, description="Percentage of total POIs covered"
+    )
+    production_sum: Optional[float] = Field(
+        None, description="Sum of Prod values for POIs in band"
+    )
+    viable: Optional[bool] = Field(
+        None, description="True if production_sum <= max_production"
     )
 
 

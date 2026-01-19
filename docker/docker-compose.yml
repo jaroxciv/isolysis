@@ -12,6 +12,20 @@ services:
       - ISO4APP_API_KEY=${ISO4APP_API_KEY:-}
     volumes:
       - shared-data:/app/data
+      - ../api:/app/api
+      - ../isolysis:/app/isolysis
+    command:
+      [
+        "uv",
+        "run",
+        "uvicorn",
+        "api.app:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -36,6 +50,23 @@ services:
       - ISO4APP_API_KEY=${ISO4APP_API_KEY:-}
     volumes:
       - shared-data:/app/data
+      - ../api:/app/api
+      - ../isolysis:/app/isolysis
+      - ../st_app.py:/app/st_app.py
+    command:
+      [
+        "uv",
+        "run",
+        "streamlit",
+        "run",
+        "st_app.py",
+        "--server.address",
+        "0.0.0.0",
+        "--server.port",
+        "8501",
+        "--server.runOnSave",
+        "true",
+      ]
     depends_on:
       api:
         condition: service_healthy
@@ -57,7 +88,23 @@ services:
       - ISO4APP_API_KEY=${ISO4APP_API_KEY:-}
     volumes:
       - shared-data:/app/data
-    command: ["uv", "run", "streamlit", "run", "st_raster_app.py", "--server.address", "0.0.0.0", "--server.port", "8502"]
+      - ../api:/app/api
+      - ../isolysis:/app/isolysis
+      - ../st_raster_app.py:/app/st_raster_app.py
+    command:
+      [
+        "uv",
+        "run",
+        "streamlit",
+        "run",
+        "st_raster_app.py",
+        "--server.address",
+        "0.0.0.0",
+        "--server.port",
+        "8502",
+        "--server.runOnSave",
+        "true",
+      ]
     depends_on:
       api:
         condition: service_healthy

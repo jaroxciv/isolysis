@@ -1,6 +1,6 @@
 # isolysis/io.py
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -14,6 +14,9 @@ class Coordinate(BaseModel):
     municipality: Optional[str] = Field(None, description="Municipality")
     unit_sis: Optional[str] = Field(None, description="Health unit or SIS unit name")
     name: Optional[str] = Field(None, description="Full name of facility/unit")
+    metadata: Optional[Dict[str, Any]] = Field(
+        None, description="Additional coordinate data"
+    )
 
 
 class Centroid(BaseModel):
