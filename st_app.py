@@ -644,7 +644,7 @@ def render_analysis_summary(analysis):
 
     with col2:
         noi = analysis.get("network_optimization_index", None)
-        help_msg = f"(X - Y - Z) / total_pois - measures how efficiently the network covers POIs"
+        help_msg = "(X - Y - Z) / total_pois - measures how efficiently the network covers POIs"
         if noi is not None:
             st.metric(
                 "Network Optimization Index",
@@ -807,6 +807,71 @@ def render_out_of_band_analysis(oob_analysis):
         )
 
 
+def render_export_button(analysis):
+    """Render export button to download coordinates with center coverage columns"""
+    from datetime import datetime
+
+    import pandas as pd
+
+    # Generate filename with date suffix (YYMMDD)
+    date_suffix = datetime.now().strftime("%y%m%d")
+    filename = f"coverage_export_{date_suffix}.csv"
+
+    # Build POI coverage lookup from analysis
+    poi_in_center = {}  # {center_id: set of poi_ids}
+    for cov in analysis.get("coverage_analysis", []):
+        center_id = cov.get("centroid_id")
+        poi_ids = set()
+        for band in cov.get("bands", []):
+            poi_ids.update(band.get("poi_ids", []))
+        poi_in_center[center_id] = poi_ids
+
+    # Build DataFrame from uploaded coordinates
+    coords = st.session_state.uploaded_coordinates
+
+    # Check if any coordinate has region/municipality data
+    has_region = any(c.region is not None for c in coords)
+    has_municipality = any(c.municipality is not None for c in coords)
+
+    data = []
+    for coord in coords:
+        row = {
+            "id": coord.id,
+            "Nombre": coord.name,
+            "Latitud": coord.lat,
+            "Longitud": coord.lon,
+        }
+        # Add Region/Municipality only if they exist in the data
+        if has_region:
+            row["Region"] = coord.region
+        if has_municipality:
+            row["Municipality"] = coord.municipality
+
+        # Add metadata fields if available
+        if coord.metadata:
+            row["Categoria"] = coord.metadata.get("Categoria", "")
+            row["Subcategoria"] = coord.metadata.get("Subcategoria", "")
+            row["Prod"] = coord.metadata.get("Prod", 0)
+
+        # Add binary columns for each center
+        for center_id in st.session_state.centers.keys():
+            row[center_id] = 1 if coord.id in poi_in_center.get(center_id, set()) else 0
+
+        data.append(row)
+
+    df = pd.DataFrame(data)
+
+    # Convert to CSV
+    csv_data = df.to_csv(index=False)
+
+    st.download_button(
+        label="📥 Export Coverage Data",
+        data=csv_data,
+        file_name=filename,
+        mime="text/csv",
+    )
+
+
 def render_spatial_analysis_panel():
     """Render the complete spatial analysis panel"""
     # Only show if we have both centers and uploaded coordinates
@@ -856,6 +921,9 @@ def render_spatial_analysis_panel():
 
         # Summary metrics
         render_analysis_summary(analysis)
+
+        # Export button
+        render_export_button(analysis)
 
         # Detailed analysis in tabs
         tab1, tab2, tab3 = st.tabs(["🎯 Coverage", "🔄 Intersections", "🚫 Uncovered"])

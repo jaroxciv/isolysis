@@ -4,7 +4,6 @@ from typing import Dict, List, Optional, Tuple
 
 import folium as fl
 import pandas as pd
-import rasterio
 import requests
 import streamlit as st
 from loguru import logger
@@ -168,7 +167,7 @@ def _parse_tabular_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
     """
     Parse coordinates from CSV or XLSX files.
     Requires columns: Categoria, Subcategoria, Nombre, Latitude, Longitud.
-    Optional column: Prod (production value for viability checking).
+    Optional columns: Prod (production value), Region, Municipality.
     """
     try:
         file_name = uploaded_file.name.lower()
@@ -202,20 +201,44 @@ def _parse_tabular_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
             df["Prod"] = df["Prod"].apply(_to_float)
             logger.info("📊 Found 'Prod' column - production values will be included")
 
+        # Handle optional Region column
+        has_region = "Region" in df.columns
+        if has_region:
+            df["Region"] = df["Region"].astype(str).str.strip()
+            logger.info("📍 Found 'Region' column")
+
+        # Handle optional Municipality column
+        has_municipality = "Municipality" in df.columns
+        if has_municipality:
+            df["Municipality"] = df["Municipality"].astype(str).str.strip()
+            logger.info("🏘️ Found 'Municipality' column")
+
         df = df.dropna(subset=["Latitud", "Longitud"])
         df = df[(df["Latitud"].between(-90, 90)) & (df["Longitud"].between(-180, 180))]
 
         coordinates = []
         for i, row in df.iterrows():
             prod_value = float(row.get("Prod", 0) or 0) if has_prod else 0.0
+            region_value = row.get("Region") if has_region else None
+            municipality_value = row.get("Municipality") if has_municipality else None
+
+            # Handle NaN values
+            if bool(pd.isna(region_value)):
+                region_value = None
+
+            if bool(pd.isna(municipality_value)):
+                municipality_value = None
+
             coordinates.append(
                 Coordinate(
                     id=f"poi_{i + 1}",
                     name=row["Nombre"],
                     lat=row["Latitud"],
                     lon=row["Longitud"],
-                    region=None,
-                    municipality=None,
+                    region=region_value,
+                    department=None,
+                    municipality=municipality_value,
+                    unit_sis=None,
                     metadata={
                         "Categoria": row["Categoria"],
                         "Subcategoria": row["Subcategoria"],
