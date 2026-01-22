@@ -775,7 +775,11 @@ def render_intersection_analysis(intersection_analysis):
             poi_count = intersection["poi_count"]
             overlap_type = intersection["overlap_type"]
 
-            st.write(f"• {label} ({overlap_type}) - **{poi_count} POIs**")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.write(f"• {label} ({overlap_type})")
+            with col2:
+                st.code(f"{poi_count} POIs")
 
 
 def render_out_of_band_analysis(oob_analysis):
