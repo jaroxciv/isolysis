@@ -9,7 +9,6 @@ from api.utils import (
     add_coordinates_to_map,
     call_api,
     format_time_display,
-    get_band_color,
     get_coordinates_center,
     get_map_center,
     get_pos,
@@ -28,6 +27,18 @@ ISO4APP_API_KEY = os.getenv("ISO4APP_API_KEY")
 # Use Docker's service name in container, localhost in local dev
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
 ISOCHRONES_ENDPOINT = f"{API_URL}/isochrones"
+
+# Default color palette for isochrones
+DEFAULT_COLORS = [
+    "#3388ff",
+    "#ff5733",
+    "#33ff57",
+    "#ff33f5",
+    "#ffcc00",
+    "#00ccff",
+    "#9933ff",
+    "#ff6600",
+]
 
 # Page config
 st.set_page_config(page_title="🗺️ Simple Isochrone Map", layout="wide")
@@ -57,17 +68,80 @@ def create_feature_group():
 # -------------------------
 # FRAGMENT FUNCTIONS
 # -------------------------
-@st.fragment(run_every=1)
 def build_feature_group():
     """Build feature group with all current elements (fragment for auto-refresh)"""
     fg = create_feature_group()
 
+    # Build coverage data lookup from analysis results if available
+    coverage_by_center = {}
+    has_analysis = hasattr(st.session_state, "analysis_result")
+    if has_analysis:
+        for cov in st.session_state.analysis_result.get("coverage_analysis", []):
+            center_id = cov.get("centroid_id")
+            if cov.get("bands"):
+                # Use first band (usually only one)
+                band = cov["bands"][0]
+                coverage_by_center[center_id] = {
+                    "band_label": band.get("band_label", "N/A"),
+                    "poi_count": band.get("poi_count", 0),
+                    "coverage_percentage": band.get("coverage_percentage", 0),
+                    "production_sum": band.get("production_sum", 0) or 0,
+                    "viable": band.get("viable"),
+                }
+
     # Add center markers
-    for name, coords in st.session_state.centers.items():
+    for idx, (name, coords) in enumerate(st.session_state.centers.items()):
+        # Build tooltip with coverage data if available
+        max_prod = coords.get("max_production", 0)
+
+        if name in coverage_by_center:
+            cov_data = coverage_by_center[name]
+            viable_str = ""
+            if cov_data["viable"] is True:
+                viable_str = f"<br>Max Prod: {max_prod:,.0f}<br>Viable: Yes"
+            elif cov_data["viable"] is False:
+                viable_str = f"<br>Max Prod: {max_prod:,.0f}<br>Viable: No"
+
+            tooltip_html = (
+                f"<b>{name}</b><br>"
+                f"Time Band: {cov_data['band_label']}<br>"
+                f"POIs Covered: {cov_data['poi_count']}<br>"
+                f"Coverage: {cov_data['coverage_percentage']:.1f}%<br>"
+                f"Prod Sum: {cov_data['production_sum']:,.0f}{viable_str}"
+            )
+            tooltip = fl.Tooltip(tooltip_html)
+        else:
+            tooltip = name
+
+        # Use popup instead of tooltip for rich content
+        if name in coverage_by_center:
+            cov_data = coverage_by_center[name]
+            viable_str = ""
+            if cov_data["viable"] is True:
+                viable_str = (
+                    f"<br><b>Max Prod:</b> {max_prod:,.0f}<br><b>Viable:</b> ✅ Yes"
+                )
+            elif cov_data["viable"] is False:
+                viable_str = (
+                    f"<br><b>Max Prod:</b> {max_prod:,.0f}<br><b>Viable:</b> ❌ No"
+                )
+
+            popup_html = f"""
+            <div style="font-family: sans-serif; font-size: 12px;">
+            <b>{name}</b><br>
+            <b>Time Band:</b> {cov_data["band_label"]}<br>
+            <b>POIs Covered:</b> {cov_data["poi_count"]}<br>
+            <b>Coverage:</b> {cov_data["coverage_percentage"]:.1f}%<br>
+            <b>Prod Sum:</b> {cov_data["production_sum"]:,.0f}{viable_str}
+            </div>
+            """
+        else:
+            popup_html = f"{name}<br>{coords['lat']:.5f}, {coords['lng']:.5f}"
+
         marker = fl.Marker(
             location=[coords["lat"], coords["lng"]],
-            popup=f"{name}<br>{coords['lat']:.5f}, {coords['lng']:.5f}",
-            tooltip=name,
+            popup=fl.Popup(popup_html, max_width=300),
+            tooltip=tooltip,
             icon=fl.Icon(color="red", icon="plus"),
         )
         fg.add_child(marker)
@@ -94,37 +168,36 @@ def build_feature_group():
             )
             fg.add_child(circle_marker)
 
-    # Add isochrones
-    for center_name, isochrone_data in st.session_state.isochrones.items():
+    # Add isochrones with per-center colors
+    for idx, (center_name, isochrone_data) in enumerate(
+        st.session_state.isochrones.items()
+    ):
         if "bands" in isochrone_data and isochrone_data["bands"]:
             band_data = isochrone_data["bands"][0]  # single polygon only
             band_hours = band_data["band_hours"]
             geojson_feature = band_data["geojson_feature"]
             time_display = format_time_display(band_hours)
-            tooltip_text = f"{center_name} - {time_display} travel area"
-            popup_text = (
-                f"{center_name}<br>Travel time: {time_display}<br>Band: {band_hours}h"
+
+            # Get per-center color or use default from palette
+            center_coords = st.session_state.centers.get(center_name, {})
+            fill_color = center_coords.get(
+                "color", DEFAULT_COLORS[idx % len(DEFAULT_COLORS)]
             )
+            border_color = fill_color
 
-            # Single color (middle of colormap)
-            colormap = st.session_state.get("colormap", "viridis")
-            fill_color, border_color = get_band_color(0, 1, colormap)
-
-            style_func = lambda x, fill=fill_color, border=border_color: {
-                "fillColor": fill,
-                "color": border,
-                "weight": 2,
-                "fillOpacity": 0.4,
-                "opacity": 0.8,
-            }
+            def style_func(x, fill=fill_color, border=border_color):
+                return {
+                    "fillColor": fill,
+                    "color": border,
+                    "weight": 2,
+                    "fillOpacity": 0.4,
+                    "opacity": 0.8,
+                }
 
             if geojson_feature["geometry"]["type"] in ["Polygon", "MultiPolygon"]:
-                # Remove tooltip to allow clicks to pass through
                 geojson_layer = fl.GeoJson(
                     geojson_feature,
                     style_function=style_func,
-                    # popup=popup_text,
-                    # tooltip=tooltip_text,  # Disabled to allow click-through
                     control=True,
                     overlay=True,
                     show=True,
@@ -137,7 +210,7 @@ def build_feature_group():
 def draw_map():
     """Draw the map with all current elements"""
     m = create_base_map()
-    fg = build_feature_group()  # This is now the fragment
+    fg = build_feature_group()
 
     map_center = get_map_center()
 
@@ -145,7 +218,7 @@ def draw_map():
         m,
         center=map_center,
         zoom=9,
-        key="dynamic_map",
+        key="main_map",
         feature_group_to_add=fg,
         height=500,
         width=None,
@@ -247,25 +320,6 @@ def render_sidebar():
             st.session_state.iso4app_speed_type = speed_type
             st.session_state.iso4app_speed_limit = speed_limit
 
-        # Colormap selection
-        colormap = st.selectbox(
-            "Color Scheme",
-            options=[
-                "viridis",
-                "plasma",
-                "magma",
-                "inferno",
-                "cividis",
-                "Blues",
-                "Reds",
-                "YlOrRd",
-                "RdYlBu_r",
-            ],
-            index=0,
-            help="Color scheme for polygon fill",
-        )
-        st.session_state.colormap = colormap
-
         st.markdown("---")
         handle_coordinate_upload_sidebar()
 
@@ -281,7 +335,7 @@ def render_sidebar():
             if speed_limit:
                 st.write(f"Speed limit: {speed_limit} km/h")
 
-    return provider, rho, colormap
+    return provider, rho
 
 
 def process_isochrone_request(center_name, lat, lng, rho, provider):
@@ -431,8 +485,8 @@ def render_center_controls():
                 )
                 prod_sum_by_center[center_id] = total_prod
 
-        # List all centers with band information and max_production input
-        for name, coords in st.session_state.centers.items():
+        # List all centers with band information, color picker, and max_production input
+        for idx, (name, coords) in enumerate(st.session_state.centers.items()):
             bands_info = ""
             if (
                 name in st.session_state.isochrones
@@ -449,7 +503,22 @@ def render_center_controls():
             if name in prod_sum_by_center:
                 prod_sum_info = f" | Prod: {prod_sum_by_center[name]:.1f}"
 
-            col_info, col_max_prod = st.columns([3, 1])
+            col_color, col_info, col_max_prod = st.columns([0.5, 2.5, 1])
+
+            with col_color:
+                # Get current color or assign default
+                current_color = coords.get(
+                    "color", DEFAULT_COLORS[idx % len(DEFAULT_COLORS)]
+                )
+                new_color = st.color_picker(
+                    "Color",
+                    value=current_color,
+                    key=f"color_{name}",
+                    label_visibility="collapsed",
+                )
+                if new_color != coords.get("color"):
+                    st.session_state.centers[name]["color"] = new_color
+
             with col_info:
                 st.write(
                     f"**{name}:** {coords['lat']:.5f}, {coords['lng']:.5f}{bands_info}{prod_sum_info}"
@@ -480,10 +549,15 @@ def send_analysis_request(provider, rho):
     # Prepare centroids from current centers (including per-center max_production)
     centroids = []
     for name, coords in st.session_state.centers.items():
+        # Use the stored rho for this center, fallback to current sidebar value
+        center_rho = rho
+        if name in st.session_state.isochrones:
+            center_rho = st.session_state.isochrones[name].get("rho", rho)
+
         centroid_data = {
             "lat": coords["lat"],
             "lon": coords["lng"],
-            "rho": rho,
+            "rho": center_rho,
             "id": name,
         }
         # Include max_production if set (> 0)
@@ -735,6 +809,7 @@ def render_spatial_analysis_panel():
                     ):
                         st.session_state.analysis_result = result["spatial_analysis"]
                         st.success("✅ Analysis complete!")
+                        st.rerun()  # Refresh to update map tooltips
                     else:
                         st.error("❌ Analysis failed - no POI data in response")
 
@@ -779,7 +854,7 @@ def main():
         st.session_state.isochrones = {}
 
     # Render sidebar and get settings
-    provider, rho, colormap = render_sidebar()
+    provider, rho = render_sidebar()
 
     # Main content
     st.title("🗺️ Click to Add Isochrone Centers")
