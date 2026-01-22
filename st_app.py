@@ -28,16 +28,16 @@ ISO4APP_API_KEY = os.getenv("ISO4APP_API_KEY")
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
 ISOCHRONES_ENDPOINT = f"{API_URL}/isochrones"
 
-# Default color palette for isochrones
+# Default color palette for isochrones (darker tones)
 DEFAULT_COLORS = [
-    "#3388ff",
-    "#ff5733",
-    "#33ff57",
-    "#ff33f5",
-    "#ffcc00",
-    "#00ccff",
-    "#9933ff",
-    "#ff6600",
+    "#1a5ccc",
+    "#cc4429",
+    "#1fcc3d",
+    "#cc29c4",
+    "#cca300",
+    "#0099cc",
+    "#7a29cc",
+    "#cc5200",
 ]
 
 # Page config
@@ -275,18 +275,39 @@ def render_sidebar():
         )
         st.session_state.provider = provider
 
-        # Travel time (rho) - in minutes for UI, converted to hours for API
-        rho_minutes = st.slider(
-            "Travel Time (minutes)",
-            min_value=5,
-            max_value=60,
-            value=30,
-            step=5,
-            help="Maximum travel time from center",
+        # Travel time unit selector
+        time_unit = st.radio(
+            "Time Unit",
+            options=["Minutes", "Hours"],
+            index=0,
+            horizontal=True,
         )
-        rho = rho_minutes / 60.0  # Convert to hours for API
+
+        # Travel time slider - adjusts based on unit
+        if time_unit == "Minutes":
+            time_value = st.slider(
+                "Travel Time",
+                min_value=5,
+                max_value=120,
+                value=30,
+                step=5,
+                help="Maximum travel time from center (minutes)",
+            )
+            rho = time_value / 60.0  # Convert to hours for API
+            st.session_state.rho_minutes = time_value
+        else:
+            time_value = st.slider(
+                "Travel Time",
+                min_value=0.5,
+                max_value=6.0,
+                value=0.5,
+                step=0.5,
+                help="Maximum travel time from center (hours)",
+            )
+            rho = time_value  # Already in hours
+            st.session_state.rho_minutes = int(time_value * 60)
+
         st.session_state.rho = rho
-        st.session_state.rho_minutes = rho_minutes
 
         # Iso4App-specific options
         if provider == "iso4app":
@@ -324,9 +345,12 @@ def render_sidebar():
         handle_coordinate_upload_sidebar()
 
         st.markdown("---")
-        st.write(f"**Settings:**")
+        st.write("**Settings:**")
         st.write(f"Provider: {provider}")
-        st.write(f"Travel time: {rho_minutes} min")
+        if time_unit == "Minutes":
+            st.write(f"Travel time: {time_value} min")
+        else:
+            st.write(f"Travel time: {time_value}h")
 
         if provider == "iso4app":
             st.write(f"Type: {iso_type}")
