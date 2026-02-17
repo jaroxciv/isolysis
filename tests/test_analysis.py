@@ -1,15 +1,15 @@
 import geopandas as gpd
 import pytest
 from loguru import logger
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Polygon
 
-from api.schemas import POI
 from isolysis.analysis import (
     compute_band_coverage,
     compute_spatial_analysis,
     format_time_display,
     pois_to_geodataframe,
 )
+from isolysis.models import POI
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ class TestUtils:
         gdf = pois_to_geodataframe(sample_pois)
 
         assert len(gdf) == len(sample_pois)
-        assert gdf.crs.to_string() == "EPSG:4326"
+        assert gdf.crs is not None and gdf.crs.to_string() == "EPSG:4326"
         assert "id" in gdf.columns
 
 
@@ -69,7 +69,7 @@ class TestCoverage:
 
     def test_empty_pois(self, sample_isochrones):
         logger.info("Testing coverage with empty POIs")
-        empty_gdf = gpd.GeoDataFrame(columns=["id", "geometry"], crs="EPSG:4326")
+        empty_gdf = gpd.GeoDataFrame({"id": [], "geometry": []}, crs="EPSG:4326")
         coverages = compute_band_coverage(sample_isochrones, empty_gdf)
         assert len(coverages) == 0
 
@@ -102,7 +102,7 @@ class TestSpatialAnalysis:
     def test_empty_input(self):
         logger.info("Testing analysis with empty input")
         empty_gdf = gpd.GeoDataFrame(
-            columns=["centroid_id", "band_hours", "geometry"], crs="EPSG:4326"
+            {"centroid_id": [], "band_hours": [], "geometry": []}, crs="EPSG:4326"
         )
         analysis = compute_spatial_analysis(empty_gdf, [])
 

@@ -2,27 +2,12 @@
 
 import time
 from functools import wraps
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import geopandas as gpd
 from loguru import logger
 
-
-def save_polygons_gpkg(
-    polygons, centroids, filename="isochrones.gpkg", layer="isochrones"
-):
-    gdf = gpd.GeoDataFrame(
-        {
-            "id": [c["id"] for c in centroids],
-            "geometry": polygons,
-            "rho": [c["rho"] for c in centroids],
-            "lat": [c["lat"] for c in centroids],
-            "lon": [c["lon"] for c in centroids],
-        },
-        crs="EPSG:4326",
-    )
-    gdf.to_file(filename, driver="GPKG", layer=layer)
-    logger.success(f"Isochrone polygons saved to {filename} (layer={layer})")
+from isolysis.constants import CRS_WGS84
 
 
 def format_time(seconds: float) -> str:
@@ -65,7 +50,7 @@ def harmonize_isochrones_columns(records: List[Dict[str, Any]]) -> gpd.GeoDataFr
     with a standardized 'band_hours' column (float) and 'geometry'.
     """
     # Make DataFrame
-    gdf = gpd.GeoDataFrame(records, crs="EPSG:4326")
+    gdf = gpd.GeoDataFrame(records, crs=CRS_WGS84)
 
     # Try to handle various possible band columns
     if "band_hours" not in gdf.columns:
@@ -75,9 +60,6 @@ def harmonize_isochrones_columns(records: List[Dict[str, Any]]) -> gpd.GeoDataFr
             gdf["band_hours"] = gdf["time_min"] / 60.0
         elif "band_secs" in gdf.columns:
             gdf["band_hours"] = gdf["band_secs"] / 3600.0
-        elif "band_km" in gdf.columns:
-            # For distance-based isochrones: optionally convert to hours with speed info if needed
-            pass
         else:
             raise ValueError(
                 "No known band column found (band_hours, band_minutes, time_min, etc.)"

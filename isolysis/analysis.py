@@ -8,7 +8,8 @@ from loguru import logger
 from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 
-from api.schemas import (
+from isolysis.constants import CRS_WEB_MERCATOR, CRS_WGS84
+from isolysis.models import (
     POI,
     BandCoverage,
     BandIntersection,
@@ -30,12 +31,17 @@ def format_time_display(hours: float) -> str:
         return f"{hours}h"
 
 
+def _extract_centroid_id(row, idx) -> str:
+    """Extract centroid_id from an isochrone row, with fallback."""
+    return str(row.get("centroid_id") or row.get("id") or f"unknown_{idx}")
+
+
 def pois_to_geodataframe(pois: List[POI]) -> gpd.GeoDataFrame:
     """Convert POI list to GeoDataFrame"""
     if not pois:
         return gpd.GeoDataFrame(
             {"id": pd.Series(dtype="str"), "geometry": pd.Series(dtype="object")},
-            crs="EPSG:4326",
+            crs=CRS_WGS84,
         )
 
     logger.debug(f"Converting {len(pois)} POIs to GeoDataFrame")
@@ -83,7 +89,7 @@ def compute_band_coverage(
     max_production_by_centroid = max_production_by_centroid or {}
 
     for idx, row in isochrones_gdf.iterrows():
-        centroid_id = str(row.get("centroid_id") or row.get("id") or f"unknown_{idx}")
+        centroid_id = _extract_centroid_id(row, idx)
         band_hours = float(row["band_hours"])
         geometry = cast(BaseGeometry, row["geometry"])
 
@@ -95,12 +101,16 @@ def compute_band_coverage(
         coverage_percentage = (poi_count / total_pois * 100) if total_pois > 0 else 0.0
         band_label = format_time_display(band_hours)
 
-        # Sum production values from POI metadata
-        production_sum = 0.0
-        if "metadata" in matches.columns:
-            for _, poi_row in matches.iterrows():
-                meta = poi_row.get("metadata") or {}
-                production_sum += float(meta.get("Prod", 0) or 0)
+        # Vectorized production sum from POI metadata
+        production_sum = (
+            float(
+                pd.Series(matches["metadata"])
+                .apply(lambda m: float((m or {}).get("Prod", 0) or 0))
+                .sum()
+            )
+            if "metadata" in matches.columns and not matches.empty
+            else 0.0
+        )
 
         # Calculate viability using per-centroid max_production
         viable: Optional[bool] = None
@@ -207,7 +217,7 @@ def compute_band_intersections(
     # Prepare polygon data with labels (legacy format for speed)
     polys = []
     for idx, row in isochrones_gdf.iterrows():
-        centroid_id = str(row.get("centroid_id") or row.get("id") or f"unknown_{idx}")
+        centroid_id = _extract_centroid_id(row, idx)
         band_hours = float(row["band_hours"])
         band_label = format_time_display(band_hours)
         label = f"{centroid_id}_{band_label}"
@@ -320,7 +330,9 @@ def compute_band_intersections(
 
 
 def compute_out_of_band_analysis(
-    isochrones_gdf: gpd.GeoDataFrame, pois_gdf: gpd.GeoDataFrame
+    isochrones_gdf: gpd.GeoDataFrame,
+    pois_gdf: gpd.GeoDataFrame,
+    covered_poi_ids: Optional[set] = None,
 ) -> OutOfBandAnalysis:
     """Find POIs that are outside all isochrone coverage (legacy approach for speed)"""
     if pois_gdf.empty:
@@ -328,12 +340,15 @@ def compute_out_of_band_analysis(
 
     logger.debug("Computing out-of-band analysis...")
 
-    # Fast approach: collect all covered POI IDs from individual band analysis
-    covered_ids = set()
-    for idx, row in isochrones_gdf.iterrows():
-        geom = cast(BaseGeometry, row.geometry)
-        matches = pois_gdf[pois_gdf.geometry.within(geom)]
-        covered_ids.update(matches["id"].tolist())
+    # Use pre-computed covered IDs if available, otherwise compute them
+    if covered_poi_ids is None:
+        covered_ids = set()
+        for idx, row in isochrones_gdf.iterrows():
+            geom = cast(BaseGeometry, row.geometry)
+            matches = pois_gdf[pois_gdf.geometry.within(geom)]
+            covered_ids.update(matches["id"].tolist())
+    else:
+        covered_ids = covered_poi_ids
 
     # Find uncovered POIs
     all_ids = set(pois_gdf["id"])
@@ -468,9 +483,16 @@ def compute_spatial_analysis(
         isochrones_gdf, pois_gdf, min_overlap, max_combinations
     )
 
-    # Compute out-of-band analysis
+    # Collect all covered POI IDs from band coverages (computed once, reused below)
+    all_covered_poi_ids = set()
+    for coverage in band_coverages:
+        all_covered_poi_ids.update(coverage.poi_ids)
+
+    # Compute out-of-band analysis (pass pre-computed covered IDs to skip redundant spatial joins)
     logger.debug("Computing out-of-band analysis...")
-    oob_analysis = compute_out_of_band_analysis(isochrones_gdf, pois_gdf)
+    oob_analysis = compute_out_of_band_analysis(
+        isochrones_gdf, pois_gdf, covered_poi_ids=all_covered_poi_ids
+    )
 
     # Compute Network Optimisation Index
     logger.debug("Computing network optimisation index...")
@@ -482,11 +504,6 @@ def compute_spatial_analysis(
     )
 
     # Calculate global statistics
-    all_covered_poi_ids = set()
-    for coverage in centroid_coverages:
-        for band in coverage.bands:
-            all_covered_poi_ids.update(band.poi_ids)
-
     global_coverage_percentage = (
         (len(all_covered_poi_ids) / len(pois) * 100) if pois else 0.0
     )
@@ -526,7 +543,7 @@ def _calculate_area_km2(geometry) -> float:
     try:
         # Convert to a projected CRS for area calculation (using Web Mercator as approximation)
         gdf_temp = gpd.GeoDataFrame([{"geometry": geometry}], crs="EPSG:4326")
-        gdf_projected = gdf_temp.to_crs("EPSG:3857")  # Web Mercator
+        gdf_projected = gdf_temp.to_crs(CRS_WEB_MERCATOR)
         area_m2 = gdf_projected.geometry.area.iloc[0]
         return area_m2 / 1_000_000  # Convert to km²
     except Exception:

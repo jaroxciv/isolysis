@@ -1,5 +1,3 @@
-import json
-
 import pytest
 import requests
 from loguru import logger
@@ -95,5 +93,5 @@ class TestErrors:
         }
 
         response = requests.post(f"{api_url}/isochrones", json=payload)
-        # Should either work (key present) or return 400 (key missing)
-        assert response.status_code in [200, 400]
+        # 200: key present + success; 503: key missing; 500: key present + computation fails
+        assert response.status_code in [200, 500, 503]

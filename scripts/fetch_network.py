@@ -1,6 +1,6 @@
 # fetch_network.py
 
-import sys
+import os
 
 import osmnx as ox
 from loguru import logger
@@ -25,7 +25,6 @@ def fetch_and_save_network(
 
 if __name__ == "__main__":
     import argparse
-    import os
 
     parser = argparse.ArgumentParser(
         description="Download and save OSM road network as GraphML."

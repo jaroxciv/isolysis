@@ -1,18 +1,21 @@
 import os
+from typing import Optional
 
 import contextily as ctx
 import geopandas as gpd
 import matplotlib.pyplot as plt
 from loguru import logger
 
+from isolysis.constants import CRS_WGS84, DEFAULT_DPI
+
 
 def plot_isochrones(
     gpkg_path: str,
     layer: str = "isochrones",
     color_by: str = "band_hours",
-    out_png: str = None,
-    provider: str = None,
-    points_gdf: gpd.GeoDataFrame = None,
+    out_png: Optional[str] = None,
+    provider: Optional[str] = None,
+    points_gdf: Optional[gpd.GeoDataFrame] = None,
     figsize=(10, 10),
     cmap="plasma",
     alpha=0.5,
@@ -34,15 +37,13 @@ def plot_isochrones(
 
     # Always ensure CRS is set for transformation and plotting
     if gdf.crs is None:
-        gdf.set_crs("EPSG:4326", inplace=True)
+        gdf.set_crs(CRS_WGS84, inplace=True)
     gdf_web = gdf.to_crs(epsg=3857)
 
     # Correct order: plot largest bands first (bottom), smallest last (top)
     gdf_web = gdf_web.sort_values(color_by, ascending=False)
 
     fig, ax = plt.subplots(figsize=figsize)
-
-    # logger.debug(gdf_web[[color_by, 'geometry']].assign(area_km2 = gdf_web['geometry'].area / 1e6))
 
     # Plotting: smallest bands will be on top, colors will be correct
     gdf_web.plot(
@@ -71,7 +72,7 @@ def plot_isochrones(
 
     ctx.add_basemap(
         ax,
-        source=ctx.providers.CartoDB.Positron,
+        source="CartoDB.Positron",
         attribution_size=8,
     )
     ax.set_axis_off()
@@ -90,7 +91,7 @@ def plot_isochrones(
         out_png = "outputs/isochrones_plot.png"
 
     if out_png:
-        fig.savefig(out_png, dpi=180)
+        fig.savefig(out_png, dpi=DEFAULT_DPI)
         logger.success(f"Saved isochrone plot as {out_png}")
 
     plt.show()

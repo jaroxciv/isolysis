@@ -5,10 +5,9 @@ import os
 import osmnx as ox
 from loguru import logger
 
-from api.schemas import POI
 from isolysis.analysis import compute_spatial_analysis
-from isolysis.io import Centroid, Coordinate, IsoRequest
 from isolysis.isochrone import compute_isochrones
+from isolysis.models import POI, Centroid, Coordinate, IsoRequest
 from isolysis.utils import harmonize_isochrones_columns, log_timing
 
 
@@ -21,11 +20,6 @@ def main():
         choices=["osmnx", "iso4app", "mapbox"],
         default="osmnx",
         help="Which provider to use for isochrone calculation",
-    )
-    parser.add_argument(
-        "--plot-points",
-        action="store_true",
-        help="If set, plots the coordinates (points) together with the isochrones",
     )
     args = parser.parse_args()
 
@@ -63,7 +57,6 @@ def main():
         centroids_dicts,
         provider=args.provider,
         travel_speed_kph=30,
-        interval=0.25,
         G=G,
     )
     logger.info("Generated {} banded isochrones.", len(isochrones))

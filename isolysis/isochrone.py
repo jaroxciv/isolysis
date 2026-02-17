@@ -7,11 +7,8 @@ import networkx as nx
 import numpy as np
 import osmnx as ox
 import requests
-from dotenv import load_dotenv
 from loguru import logger
 from shapely.geometry import MultiPoint, Point, shape
-
-load_dotenv()
 
 
 def generate_time_bands(max_rho: float, num_bands: int = 1) -> List[float]:
@@ -241,13 +238,16 @@ class Iso4AppIsochroneProvider(IsochroneProvider):
                     params["speedLimit"] = float(speed_limit)
 
                 try:
-                    response = requests.get(self.BASE_URL, params=params)
+                    response = requests.get(self.BASE_URL, params=params, timeout=30)
                     if response.status_code != 200:
+                        msg = response.text.strip()[:200]
                         logger.error(
                             f"Iso4App [{centroid_id} {display_value}{unit}]: "
-                            f"API error {response.status_code}, {response.text}"
+                            f"API error {response.status_code}, {msg}"
                         )
-                        continue
+                        raise ValueError(
+                            f"Iso4App API error {response.status_code}: {msg}"
+                        )
 
                     geojson = response.json()
                     poly = None
@@ -278,6 +278,8 @@ class Iso4AppIsochroneProvider(IsochroneProvider):
                             f"band={display_value}{unit}"
                         )
 
+                except ValueError:
+                    raise
                 except Exception as e:
                     logger.error(
                         f"Iso4App: Exception for id={centroid_id}, band={display_value}{unit}: {e}"
@@ -321,12 +323,15 @@ class MapboxIsochroneProvider(IsochroneProvider):
             }
             url = f"{self.BASE_URL}/{profile}/{lon},{lat}"
             try:
-                response = requests.get(url, params=params)
+                response = requests.get(url, params=params, timeout=30)
                 if response.status_code != 200:
+                    msg = response.text.strip()[:200]
                     logger.error(
-                        f"MapboxIsochrone [{centroid_id}]: API error {response.status_code}, {response.text}"
+                        f"MapboxIsochrone [{centroid_id}]: API error {response.status_code}, {msg}"
                     )
-                    continue
+                    raise ValueError(
+                        f"Mapbox API error {response.status_code}: {msg}"
+                    )
 
                 # Mapbox returns features ordered largest (outermost) to smallest (innermost):
                 # We reverse bands so the largest band matches the largest polygon.
@@ -346,6 +351,8 @@ class MapboxIsochroneProvider(IsochroneProvider):
                         logger.success(
                             f"Mapbox: Isochrone band {band_h}h generated for id={centroid_id}"
                         )
+            except ValueError:
+                raise
             except Exception as e:
                 logger.error(f"MapboxIsochrone: Exception for id={centroid_id}: {e}")
         return isochrones

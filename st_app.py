@@ -5,12 +5,12 @@ import streamlit as st
 from dotenv import find_dotenv, load_dotenv
 from streamlit_folium import st_folium
 
-from api.utils import (
+from st_utils import (
+    build_iso4app_payload_options,
     call_api,
     format_time_display,
     get_coordinates_center,
     get_map_center,
-    get_pos,
     handle_coordinate_upload,
 )
 from translations import get_selectbox_options, t
@@ -20,9 +20,6 @@ from translations import get_selectbox_options, t
 # -------------------------
 # Keep Docker env vars if present, don't override with .env file
 load_dotenv(find_dotenv(usecwd=True), override=False)
-
-MAPBOX_API_KEY = os.getenv("MAPBOX_API_KEY")
-ISO4APP_API_KEY = os.getenv("ISO4APP_API_KEY")
 
 # Use Docker's service name in container, localhost in local dev
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
@@ -63,35 +60,38 @@ def create_base_map():
     return m
 
 
-@st.cache_data
 def create_feature_group():
-    """Create empty feature group (cached)"""
+    """Create empty feature group"""
     return fl.FeatureGroup(name="Dynamic Elements")
 
 
 # -------------------------
 # FRAGMENT FUNCTIONS
 # -------------------------
+def _build_coverage_by_center() -> dict:
+    """Build coverage data lookup from analysis results (computed once per render)."""
+    coverage_by_center = {}
+    if "analysis_result" not in st.session_state:
+        return coverage_by_center
+    for cov in st.session_state.analysis_result.get("coverage_analysis", []):
+        center_id = cov.get("centroid_id")
+        if cov.get("bands"):
+            band = cov["bands"][0]
+            coverage_by_center[center_id] = {
+                "band_label": band.get("band_label", "N/A"),
+                "poi_count": band.get("poi_count", 0),
+                "coverage_percentage": band.get("coverage_percentage", 0),
+                "production_sum": band.get("production_sum", 0) or 0,
+                "viable": band.get("viable"),
+            }
+    return coverage_by_center
+
+
 def build_feature_group():
     """Build feature group with all current elements (fragment for auto-refresh)"""
     fg = create_feature_group()
 
-    # Build coverage data lookup from analysis results if available
-    coverage_by_center = {}
-    has_analysis = hasattr(st.session_state, "analysis_result")
-    if has_analysis:
-        for cov in st.session_state.analysis_result.get("coverage_analysis", []):
-            center_id = cov.get("centroid_id")
-            if cov.get("bands"):
-                # Use first band (usually only one)
-                band = cov["bands"][0]
-                coverage_by_center[center_id] = {
-                    "band_label": band.get("band_label", "N/A"),
-                    "poi_count": band.get("poi_count", 0),
-                    "coverage_percentage": band.get("coverage_percentage", 0),
-                    "production_sum": band.get("production_sum", 0) or 0,
-                    "viable": band.get("viable"),
-                }
+    coverage_by_center = _build_coverage_by_center()
 
     # Add center markers
     for idx, (name, coords) in enumerate(st.session_state.centers.items()):
@@ -159,7 +159,7 @@ def build_feature_group():
         fg.add_child(marker)
 
     # Add uploaded coordinates
-    if hasattr(st.session_state, "uploaded_coordinates"):
+    if "uploaded_coordinates" in st.session_state:
         for coord in st.session_state.uploaded_coordinates:
             label = coord.name or coord.id or "Unknown"
             circle_marker = fl.CircleMarker(
@@ -256,12 +256,12 @@ def handle_coordinate_upload_sidebar():
 
     # Add remove button if we have uploaded coordinates
     if (
-        hasattr(st.session_state, "uploaded_coordinates")
+        "uploaded_coordinates" in st.session_state
         and st.session_state.uploaded_coordinates
     ):
         if st.button(t("upload.remove_btn")):
             del st.session_state.uploaded_coordinates
-            if hasattr(st.session_state, "coord_center"):
+            if "coord_center" in st.session_state:
                 del st.session_state.coord_center
             st.success(t("upload.removed"))
             st.rerun()
@@ -421,21 +421,13 @@ def process_isochrone_request(center_name, lat, lng, rho, provider):
 
     # Iso4App extras
     if provider == "iso4app":
-        payload["options"].update(
-            {
-                "iso4app_type": st.session_state.iso4app_type,
-                "iso4app_mobility": st.session_state.iso4app_mobility,
-                "iso4app_speed_type": st.session_state.iso4app_speed_type,
-                "iso4app_speed_limit": st.session_state.iso4app_speed_limit,
-            }
-        )
+        payload["options"].update(build_iso4app_payload_options())
 
     result = call_api(ISOCHRONES_ENDPOINT, payload)
 
     if result and "results" in result and len(result["results"]) > 0:
         first_result = result["results"][0]
         geojson = first_result.get("geojson")
-        cached = first_result.get("cached", False)
 
         if geojson and "features" in geojson:
             bands_data = []
@@ -465,11 +457,8 @@ def process_isochrone_request(center_name, lat, lng, rho, provider):
                     "speed_kph": speed_kph,
                     "provider": provider,
                 }
-                cache_msg = " (cached)" if cached else ""
                 band_count = len(bands_data)
-                st.success(
-                    t("iso.added", name=center_name, count=band_count, cache=cache_msg)
-                )
+                st.success(t("iso.added", name=center_name, count=band_count, cache=""))
                 return True
             else:
                 st.error(t("iso.no_band_data", name=center_name))
@@ -484,7 +473,7 @@ def handle_map_click(map_data, provider, rho):
     """Handle map click interactions"""
     data = None
     if map_data.get("last_clicked"):
-        data = get_pos(map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"])
+        data = (map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"])
 
     if data is not None:
         lat, lng = data
@@ -544,16 +533,12 @@ def render_center_controls():
                     t("centers.cleared_all", centers=center_count, polygons=poly_count)
                 )
 
-        # Build production sum lookup from analysis results if available
-        prod_sum_by_center = {}
-        if hasattr(st.session_state, "analysis_result"):
-            for cov in st.session_state.analysis_result.get("coverage_analysis", []):
-                center_id = cov.get("centroid_id")
-                # Sum production from all bands (usually just 1)
-                total_prod = sum(
-                    band.get("production_sum", 0) or 0 for band in cov.get("bands", [])
-                )
-                prod_sum_by_center[center_id] = total_prod
+        # Build production sum lookup from coverage data
+        coverage_by_center = _build_coverage_by_center()
+        prod_sum_by_center = {
+            cid: data.get("production_sum", 0)
+            for cid, data in coverage_by_center.items()
+        }
 
         # List all centers with band information, color picker, and max_production input
         for idx, (name, coords) in enumerate(st.session_state.centers.items()):
@@ -657,7 +642,7 @@ def send_analysis_request(provider, rho):
 
     # Prepare POIs from uploaded coordinates
     pois = []
-    if hasattr(st.session_state, "uploaded_coordinates"):
+    if "uploaded_coordinates" in st.session_state:
         for coord in st.session_state.uploaded_coordinates:
             pois.append(
                 {
@@ -682,14 +667,7 @@ def send_analysis_request(provider, rho):
     }
 
     if provider == "iso4app":
-        payload["options"].update(
-            {
-                "iso4app_type": st.session_state.iso4app_type,
-                "iso4app_mobility": st.session_state.iso4app_mobility,
-                "iso4app_speed_type": st.session_state.iso4app_speed_type,
-                "iso4app_speed_limit": st.session_state.iso4app_speed_limit,
-            }
-        )
+        payload["options"].update(build_iso4app_payload_options())
 
     return call_api(ISOCHRONES_ENDPOINT, payload)
 
@@ -882,56 +860,79 @@ def render_export_button(analysis):
 
     import pandas as pd
 
+    @st.cache_data
+    def _build_csv(coverage_analysis_tuple, coords_tuple, center_ids_tuple):
+        """Build CSV data (cached to avoid recomputation on every render)."""
+        # Reconstruct coverage lookup from serializable tuple
+        poi_in_center = {}
+        for cov in coverage_analysis_tuple:
+            center_id = cov["centroid_id"]
+            poi_ids = set()
+            for band in cov.get("bands", []):
+                poi_ids.update(band.get("poi_ids", []))
+            poi_in_center[center_id] = poi_ids
+
+        # Check if any coordinate has region/municipality data
+        has_region = any(c.get("region") is not None for c in coords_tuple)
+        has_municipality = any(c.get("municipality") is not None for c in coords_tuple)
+
+        data = []
+        for coord in coords_tuple:
+            row = {
+                "id": coord["id"],
+                "Nombre": coord["name"],
+                "Latitud": coord["lat"],
+                "Longitud": coord["lon"],
+            }
+            if has_region:
+                row["Region"] = coord.get("region")
+            if has_municipality:
+                row["Municipality"] = coord.get("municipality")
+
+            metadata = coord.get("metadata")
+            if metadata:
+                row["Categoria"] = metadata.get("Categoria", "")
+                row["Subcategoria"] = metadata.get("Subcategoria", "")
+                row["Prod"] = metadata.get("Prod", 0)
+
+            for center_id in center_ids_tuple:
+                row[center_id] = (
+                    1 if coord["id"] in poi_in_center.get(center_id, set()) else 0
+                )
+
+            data.append(row)
+
+        return pd.DataFrame(data).to_csv(index=False)
+
     # Generate filename with date suffix (YYMMDD)
     date_suffix = datetime.now().strftime("%y%m%d")
     filename = f"coverage_export_{date_suffix}.csv"
 
-    # Build POI coverage lookup from analysis
-    poi_in_center = {}  # {center_id: set of poi_ids}
-    for cov in analysis.get("coverage_analysis", []):
-        center_id = cov.get("centroid_id")
-        poi_ids = set()
-        for band in cov.get("bands", []):
-            poi_ids.update(band.get("poi_ids", []))
-        poi_in_center[center_id] = poi_ids
-
-    # Build DataFrame from uploaded coordinates
-    coords = st.session_state.uploaded_coordinates
-
-    # Check if any coordinate has region/municipality data
-    has_region = any(c.region is not None for c in coords)
-    has_municipality = any(c.municipality is not None for c in coords)
-
-    data = []
-    for coord in coords:
-        row = {
-            "id": coord.id,
-            "Nombre": coord.name,
-            "Latitud": coord.lat,
-            "Longitud": coord.lon,
+    # Prepare serializable inputs for the cached function
+    coverage_analysis_tuple = tuple(
+        {
+            "centroid_id": cov.get("centroid_id"),
+            "bands": tuple(
+                {"poi_ids": tuple(b.get("poi_ids", []))} for b in cov.get("bands", [])
+            ),
         }
-        # Add Region/Municipality only if they exist in the data
-        if has_region:
-            row["Region"] = coord.region
-        if has_municipality:
-            row["Municipality"] = coord.municipality
+        for cov in analysis.get("coverage_analysis", [])
+    )
+    coords_tuple = tuple(
+        {
+            "id": c.id,
+            "name": c.name,
+            "lat": c.lat,
+            "lon": c.lon,
+            "region": c.region,
+            "municipality": c.municipality,
+            "metadata": dict(c.metadata) if c.metadata else None,
+        }
+        for c in st.session_state.uploaded_coordinates
+    )
+    center_ids_tuple = tuple(st.session_state.centers.keys())
 
-        # Add metadata fields if available
-        if coord.metadata:
-            row["Categoria"] = coord.metadata.get("Categoria", "")
-            row["Subcategoria"] = coord.metadata.get("Subcategoria", "")
-            row["Prod"] = coord.metadata.get("Prod", 0)
-
-        # Add binary columns for each center
-        for center_id in st.session_state.centers.keys():
-            row[center_id] = 1 if coord.id in poi_in_center.get(center_id, set()) else 0
-
-        data.append(row)
-
-    df = pd.DataFrame(data)
-
-    # Convert to CSV
-    csv_data = df.to_csv(index=False)
+    csv_data = _build_csv(coverage_analysis_tuple, coords_tuple, center_ids_tuple)
 
     st.download_button(
         label=t("export.btn"),
@@ -990,7 +991,7 @@ def render_spatial_analysis_panel():
         )
 
     # Show analysis results if available
-    if hasattr(st.session_state, "analysis_result"):
+    if "analysis_result" in st.session_state:
         analysis = st.session_state.analysis_result
 
         # Summary metrics

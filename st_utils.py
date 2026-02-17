@@ -1,21 +1,20 @@
+"""Shared Streamlit/Folium utilities used by both st_app.py and st_raster_app.py."""
+
 import json
 import uuid
 from typing import Dict, List, Optional, Tuple
 
-import folium as fl
 import pandas as pd
 import requests
 import streamlit as st
 from loguru import logger
 
-from isolysis.io import Coordinate
+from isolysis.analysis import format_time_display  # noqa: F401 — re-export
+from isolysis.constants import DEFAULT_MAP_CENTER
+from isolysis.models import Coordinate
 from translations import t
 
 REQUIRED_COLUMNS = {"Categoria", "Subcategoria", "Nombre", "Latitud", "Longitud"}
-
-
-def get_pos(lat, lng):
-    return lat, lng
 
 
 def call_api(url: str, payload: Dict) -> Optional[Dict]:
@@ -25,6 +24,17 @@ def call_api(url: str, payload: Dict) -> Optional[Dict]:
         response.raise_for_status()
         result = response.json()
         return result
+    except requests.exceptions.HTTPError as e:
+        # Extract detail from FastAPI JSON error response
+        detail = str(e)
+        try:
+            body = e.response.json()  # type: ignore[union-attr]
+            if "detail" in body:
+                detail = body["detail"]
+        except Exception:
+            pass
+        st.error(t("api.error", error=detail))
+        return None
     except Exception as e:
         st.error(t("api.error", error=str(e)))
         return None
@@ -33,7 +43,7 @@ def call_api(url: str, payload: Dict) -> Optional[Dict]:
 def get_map_center():
     """Get map center based on uploaded coordinates or last added centroid"""
     # Priority 1: Use uploaded coordinates center
-    if hasattr(st.session_state, "coord_center"):
+    if "coord_center" in st.session_state:
         c = st.session_state.coord_center
         return (float(c[0]), float(c[1]))
 
@@ -44,18 +54,7 @@ def get_map_center():
         return (float(last_coords["lat"]), float(last_coords["lng"]))
 
     # Default: El Salvador
-    return (13.7942, -88.8965)
-
-
-def format_time_display(hours: float) -> str:
-    """Convert hours to a readable time format"""
-    if hours < 1:
-        minutes = int(hours * 60)
-        return f"{minutes}min"
-    elif hours == int(hours):
-        return f"{int(hours)}h"
-    else:
-        return f"{hours}h"
+    return DEFAULT_MAP_CENTER
 
 
 def get_band_color(
@@ -124,7 +123,7 @@ def _parse_json_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
         data = json.loads(content)
 
         if not isinstance(data, list):
-            logger.error("❌ JSON must be a list of coordinate objects.")
+            logger.error("JSON must be a list of coordinate objects.")
             return None
 
         normalized = []
@@ -153,14 +152,14 @@ def _parse_json_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
             normalized.append(item)
 
         coordinates = [Coordinate(**item) for item in normalized]
-        logger.success(f"✅ Loaded {len(coordinates)} coordinates from JSON")
+        logger.success(f"Loaded {len(coordinates)} coordinates from JSON")
         return coordinates
 
     except json.JSONDecodeError:
-        logger.error("❌ Invalid JSON format")
+        logger.error("Invalid JSON format")
         return None
     except Exception as e:
-        logger.error(f"❌ Error parsing JSON coordinates: {e}")
+        logger.error(f"Error parsing JSON coordinates: {e}")
         return None
 
 
@@ -180,7 +179,7 @@ def _parse_tabular_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
         elif file_name.endswith((".xlsx", ".xls")):
             df = pd.read_excel(uploaded_file)
         else:
-            logger.error("❌ Unsupported tabular file type.")
+            logger.error("Unsupported tabular file type.")
             return None
 
         # Normalize headers
@@ -189,7 +188,7 @@ def _parse_tabular_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
         # Validate required columns
         missing = REQUIRED_COLUMNS.difference(df.columns)
         if missing:
-            logger.error(f"❌ Missing required columns: {', '.join(sorted(missing))}")
+            logger.error(f"Missing required columns: {', '.join(sorted(missing))}")
             return None
 
         # Clean data
@@ -203,19 +202,19 @@ def _parse_tabular_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
         has_prod = "Prod" in df.columns
         if has_prod:
             df["Prod"] = df["Prod"].apply(_to_float)
-            logger.info("📊 Found 'Prod' column - production values will be included")
+            logger.info("Found 'Prod' column - production values will be included")
 
         # Handle optional Region column
         has_region = "Region" in df.columns
         if has_region:
             df["Region"] = df["Region"].astype(str).str.strip()
-            logger.info("📍 Found 'Region' column")
+            logger.info("Found 'Region' column")
 
         # Handle optional Municipality column
         has_municipality = "Municipality" in df.columns
         if has_municipality:
             df["Municipality"] = df["Municipality"].astype(str).str.strip()
-            logger.info("🏘️ Found 'Municipality' column")
+            logger.info("Found 'Municipality' column")
 
         df = df.dropna(subset=["Latitud", "Longitud"])
         df = df[(df["Latitud"].between(-90, 90)) & (df["Longitud"].between(-180, 180))]
@@ -251,11 +250,11 @@ def _parse_tabular_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
                 )
             )
 
-        logger.success(f"✅ Loaded {len(coordinates)} coordinates from {file_name}")
+        logger.success(f"Loaded {len(coordinates)} coordinates from {file_name}")
         return coordinates
 
     except Exception as e:
-        logger.error(f"❌ Error parsing tabular coordinates: {e}")
+        logger.error(f"Error parsing tabular coordinates: {e}")
         return None
 
 
@@ -279,11 +278,11 @@ def handle_coordinate_upload(uploaded_file) -> Optional[List[Coordinate]]:
             return _parse_tabular_coordinates(uploaded_file)
 
         else:
-            logger.error("❌ Unsupported file type. Use JSON, CSV, or XLSX.")
+            logger.error("Unsupported file type. Use JSON, CSV, or XLSX.")
             return None
 
     except Exception as e:
-        logger.error(f"❌ Error processing coordinate upload: {e}")
+        logger.error(f"Error processing coordinate upload: {e}")
         return None
 
 
@@ -294,61 +293,11 @@ def get_coordinates_center(coordinates: List[Coordinate]) -> Tuple[float, float]
     return avg_lat, avg_lon
 
 
-def add_coordinates_to_map(folium_map, coordinates: List[Coordinate]):
-    """Add coordinate markers to folium map"""
-    for coord in coordinates:
-        # Use name or id for marker label
-        label = coord.name or coord.id or "Unknown"
-
-        fl.CircleMarker(
-            location=[coord.lat, coord.lon],
-            radius=3,
-            popup=f"<b>{label}</b><br>"
-            f"<b>Lat</b>: {coord.lat:.5f}<br>"
-            f"<b>Lon</b>: {coord.lon:.5f}<br>"
-            f"<b>Region</b>: {coord.region or 'N/A'}<br>"
-            f"<b>Municipality</b>: {coord.municipality or 'N/A'}",
-            tooltip=label,
-            color="black",
-            weight=1,
-            fillColor="grey",
-            fillOpacity=0.5,
-            opacity=0.8,
-        ).add_to(folium_map)
-
-
-def resolve_project_path(path: str, must_exist: bool = True) -> Optional[str]:
-    """
-    Normalize and resolve a file path (absolute or relative) within the project.
-
-    Ensures consistent behavior between Streamlit (frontend) and FastAPI (backend)
-    when working with uploaded files stored under `data/tmp`.
-
-    Args:
-        path (str): The input file path (absolute or relative).
-        must_exist (bool): If True, logs a warning when the resolved path does not exist.
-
-    Returns:
-        str: The absolute, normalized path.
-    """
-    import os
-
-    if not path:
-        return None
-
-    try:
-        # Normalize slashes and collapse redundant parts
-        p = os.path.normpath(path)
-
-        # Convert to absolute if relative
-        if not os.path.isabs(p):
-            p = os.path.join(os.getcwd(), p)
-
-        # Warn if missing
-        if must_exist and not os.path.exists(p):
-            logger.warning(f"⚠️ File not found or inaccessible: {p}")
-
-        return p
-    except Exception as e:
-        logger.error(f"❌ Failed to resolve path '{path}': {e}")
-        return path
+def build_iso4app_payload_options() -> dict:
+    """Build iso4app-specific options from session state."""
+    return {
+        "iso4app_type": st.session_state.get("iso4app_type", "isochrone"),
+        "iso4app_mobility": st.session_state.get("iso4app_mobility", "motor_vehicle"),
+        "iso4app_speed_type": st.session_state.get("iso4app_speed_type", "normal"),
+        "iso4app_speed_limit": st.session_state.get("iso4app_speed_limit"),
+    }

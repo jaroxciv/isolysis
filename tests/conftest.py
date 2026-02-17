@@ -1,5 +1,4 @@
 import sys
-from pathlib import Path
 
 import pytest
 from loguru import logger
@@ -11,11 +10,6 @@ logger.add(
     format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | {message}",
     level="INFO",
 )
-
-
-@pytest.fixture(scope="session")
-def testdir() -> str:
-    return str(Path(__file__).parent.parent.resolve())
 
 
 def pytest_addoption(parser):

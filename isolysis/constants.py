@@ -1,0 +1,7 @@
+"""Shared constants for the isolysis package."""
+
+CRS_WGS84 = "EPSG:4326"
+CRS_WEB_MERCATOR = "EPSG:3857"
+SQ_METERS_PER_KM2 = 1_000_000
+DEFAULT_MAP_CENTER = (13.7942, -88.8965)
+DEFAULT_DPI = 180

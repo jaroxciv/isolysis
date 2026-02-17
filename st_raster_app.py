@@ -19,12 +19,11 @@ from folium.raster_layers import ImageOverlay
 from PIL import Image
 from streamlit_folium import st_folium
 
-from api.utils import (
+from st_utils import (
     call_api,
     format_time_display,
     get_band_color,
     get_map_center,
-    get_pos,
 )
 from translations import get_selectbox_options, t
 
@@ -39,9 +38,6 @@ os.makedirs(tempfile.tempdir, exist_ok=True)
 # ENV + CONFIG
 # ---------------------------
 load_dotenv(find_dotenv(usecwd=True), override=False)
-
-MAPBOX_API_KEY = os.getenv("MAPBOX_API_KEY")
-ISO4APP_API_KEY = os.getenv("ISO4APP_API_KEY")
 
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
 ISOCHRONES_ENDPOINT = f"{API_URL}/isochrones"
@@ -62,20 +58,6 @@ def create_base_map():
     m = fl.Map(location=[13.7942, -88.8965], zoom_start=9, tiles="CartoDB positron")
     m.add_child(fl.LatLngPopup())
     return m
-
-
-@st.cache_data
-def get_raster_center(raster_path: str):
-    """Return (lat, lon) center coordinates of a raster file."""
-    try:
-        with rasterio.open(raster_path) as src:
-            bounds = src.bounds
-            lon_center = (bounds.left + bounds.right) / 2
-            lat_center = (bounds.top + bounds.bottom) / 2
-            return lat_center, lon_center
-    except Exception as e:
-        st.warning(t("raster.warning_center", error=str(e)))
-        return None
 
 
 @st.cache_data
@@ -164,17 +146,19 @@ def add_raster_to_feature_group(
         if "raster_overlays" not in st.session_state:
             st.session_state.raster_overlays = {}
 
-        # --- Load bytes and check cache ---
+        # --- Load bytes and check cache (include colormap in key) ---
         file_bytes = uploaded_file.getvalue()
-        if uploaded_file.name in st.session_state.raster_overlays:
-            temp_path, bounds = st.session_state.raster_overlays[uploaded_file.name]
+        colormap = st.session_state.get("colormap", "viridis")
+        cache_key = f"{uploaded_file.name}_{colormap}"
+        if cache_key in st.session_state.raster_overlays:
+            temp_path, bounds = st.session_state.raster_overlays[cache_key]
         else:
             temp_path, bounds = raster_to_png_path(
                 file_bytes,
                 uploaded_file.name,
-                st.session_state.get("colormap", "viridis"),
+                colormap,
             )
-            st.session_state.raster_overlays[uploaded_file.name] = (temp_path, bounds)
+            st.session_state.raster_overlays[cache_key] = (temp_path, bounds)
 
         # --- Wrap overlay in a FeatureGroup (for smoother handling) ---
         ImageOverlay(
@@ -430,7 +414,7 @@ def draw_map():
         )
 
     # --- Compute map center and zoom ---
-    if hasattr(st.session_state, "coord_center"):
+    if "coord_center" in st.session_state:
         center = st.session_state.coord_center
     else:
         center = get_map_center()
@@ -453,7 +437,7 @@ def draw_map():
 def handle_map_click(map_data):
     if not map_data.get("last_clicked"):
         return
-    lat, lon = get_pos(map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"])
+    lat, lon = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
     st.success(t("map.clicked", lat=f"{lat:.5f}", lng=f"{lon:.5f}"))
     if st.button(t("map.add_isochrone")):
         cname = f"Center{len(st.session_state.isochrones) + 1}"
@@ -607,6 +591,8 @@ def main():
             ):
                 st.session_state.uploaded_boundary = None
                 st.session_state.boundary_uploader_key += 1  # Reset the uploader
+                if "coord_center" in st.session_state:
+                    del st.session_state.coord_center
                 st.toast(t("raster.boundary_cleared"))
                 st.rerun()
 

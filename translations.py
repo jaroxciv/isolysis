@@ -1,11 +1,9 @@
-import streamlit as st
-
 TRANSLATIONS = {
     "es": {
         # ── Language selector ──
         "lang.label": "Idioma / Language",
         # ── Page titles ──
-        "page.isochrone_title": "🗺️ Mapa de Isócronas",
+        "page.isochrone_title": "🗺️ Análisis de Isócronas",
         "page.raster_title": "📈 Análisis Iso-Ráster",
         # ── Main titles ──
         "main.title": "🗺️ Visualizador de Red",
@@ -100,8 +98,8 @@ TRANSLATIONS = {
         "analysis.analyze_btn": "🔍 Analizar Cobertura",
         "analysis.computing": "Calculando análisis espacial...",
         "analysis.complete": "✅ ¡Análisis completado!",
-        "analysis.failed_no_data": "❌ Análisis falló - sin datos de POI en la respuesta",
-        "analysis.failed": "❌ Análisis falló: {error}",
+        "analysis.failed_no_data": "❌ No se pudo completar el análisis — verifique que los centros tienen isócronas calculadas y que hay POIs cargados.",
+        "analysis.failed": "❌ Error en el análisis: {error}",
         "analysis.caption": "Analizar {centers} centros contra {pois} POIs",
         # ── Analysis Summary ──
         "summary.header": "📊 Resumen del Análisis",
@@ -185,10 +183,10 @@ TRANSLATIONS = {
         # ── Language selector ──
         "lang.label": "Language / Idioma",
         # ── Page titles ──
-        "page.isochrone_title": "🗺️ Simple Isochrone Map",
+        "page.isochrone_title": "🗺️ Isochrone Analysis",
         "page.raster_title": "📈 Iso-Raster Analysis",
         # ── Main titles ──
-        "main.title": "🗺️ Click to Add Isochrone Centers",
+        "main.title": "🗺️ Network Visualizer",
         "main.subtitle": "Click anywhere on the map to see coordinates",
         "raster.title": "📈 Iso-Raster Analysis",
         "raster.caption": "Compute raster statistics inside isochrones and their intersections.",
@@ -280,8 +278,8 @@ TRANSLATIONS = {
         "analysis.analyze_btn": "🔍 Analyze Coverage",
         "analysis.computing": "Computing spatial analysis...",
         "analysis.complete": "✅ Analysis complete!",
-        "analysis.failed_no_data": "❌ Analysis failed - no POI data in response",
-        "analysis.failed": "❌ Analysis failed: {error}",
+        "analysis.failed_no_data": "❌ Analysis could not complete — verify that centers have computed isochrones and that POIs are loaded.",
+        "analysis.failed": "❌ Analysis error: {error}",
         "analysis.caption": "Analyze {centers} centers against {pois} POIs",
         # ── Analysis Summary ──
         "summary.header": "📊 Analysis Summary",
@@ -399,13 +397,20 @@ SELECTBOX_OPTIONS = {
 }
 
 
-def t(key: str, **kwargs) -> str:
-    """Get translated string for the current language.
+def t(key: str, lang: str | None = None, **kwargs) -> str:
+    """Get translated string for the given or current language.
 
-    Reads st.session_state.lang (default: "es"), falls back to English,
-    then to [key] if the key is missing entirely.
+    If lang is not provided, reads st.session_state.lang (default: "es").
+    Falls back to English, then to [key] if the key is missing entirely.
     """
-    lang = st.session_state.get("lang", "es")
+    if lang is None:
+        try:
+            import streamlit as st
+
+            lang = st.session_state.get("lang", "es")
+        except Exception:
+            lang = "es"
+    assert lang is not None
     text = TRANSLATIONS.get(lang, {}).get(key)
     if text is None:
         text = TRANSLATIONS.get("en", {}).get(key)
@@ -419,9 +424,16 @@ def t(key: str, **kwargs) -> str:
     return text
 
 
-def get_selectbox_options(key: str):
+def get_selectbox_options(key: str, lang: str | None = None):
     """Return (display_labels, api_values) for a selectbox based on current language."""
-    lang = st.session_state.get("lang", "es")
+    if lang is None:
+        try:
+            import streamlit as st
+
+            lang = st.session_state.get("lang", "es")
+        except Exception:
+            lang = "es"
+    assert lang is not None
     opts = SELECTBOX_OPTIONS.get(key, {}).get(lang)
     if opts is None:
         opts = SELECTBOX_OPTIONS.get(key, {}).get("en", {"labels": [], "values": []})

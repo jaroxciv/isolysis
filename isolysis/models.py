@@ -1,18 +1,56 @@
+"""Canonical home for ALL Pydantic models used across the project."""
+
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Type aliases
 ProviderName = Literal["osmnx", "iso4app", "mapbox"]
 
 
-# ---------- REQUEST/RESPONSE MODELS ----------
+# ---------- CORE DATA MODELS (from isolysis/io.py) ----------
+class Coordinate(BaseModel):
+    id: Optional[str] = Field(None, description="Unique identifier for the point")
+    lat: float = Field(..., ge=-90, le=90, description="Latitude")
+    lon: float = Field(..., ge=-180, le=180, description="Longitude")
+    region: Optional[str] = Field(None, description="Region name")
+    department: Optional[str] = Field(None, description="Department (state/province)")
+    municipality: Optional[str] = Field(None, description="Municipality")
+    unit_sis: Optional[str] = Field(None, description="Health unit or SIS unit name")
+    name: Optional[str] = Field(None, description="Full name of facility/unit")
+    metadata: Optional[Dict[str, Any]] = Field(
+        None, description="Additional coordinate data"
+    )
+
+
+class Centroid(BaseModel):
+    id: str = Field(..., description="Unique identifier for the centroid/hub")
+    lat: float = Field(..., ge=-90, le=90, description="Latitude")
+    lon: float = Field(..., ge=-180, le=180, description="Longitude")
+    rho: float = Field(..., gt=0, description="Travel time (in hours) for isochrone")
+
+
+class IsoRequest(BaseModel):
+    coordinates: Optional[List[Coordinate]] = Field(
+        None, description="Points to be analyzed"
+    )
+    centroids: List[Centroid] = Field(..., description="Isochrone centers")
+
+    @field_validator("centroids")
+    @classmethod
+    def centroids_not_empty(cls, v):
+        if not v or len(v) < 1:
+            raise ValueError("At least one centroid is required.")
+        return v
+
+
+# ---------- REQUEST/RESPONSE MODELS (from api/schemas.py) ----------
 class CentroidRequest(BaseModel):
     """Single centroid for isochrone computation"""
 
     lat: float = Field(..., ge=-90, le=90, description="Latitude")
     lon: float = Field(..., ge=-180, le=180, description="Longitude")
-    rho: float = Field(..., gt=0, description="Travel time in hours")
+    rho: float = Field(..., gt=0, le=24, description="Travel time in hours (max 24h)")
     id: Optional[str] = Field(None, description="Centroid identifier")
     max_production: Optional[float] = Field(
         None, description="Max production threshold for this centroid"
@@ -23,10 +61,10 @@ class ComputeOptions(BaseModel):
     """Options for isochrone computation"""
 
     provider: ProviderName = Field(default="osmnx", description="Routing provider")
-    travel_speed_kph: float = Field(default=30, gt=0, description="Travel speed km/h")
-    num_bands: int = Field(
-        default=1, ge=1, le=1, description="Number of time bands (Fixed to 1)"
+    travel_speed_kph: float = Field(
+        default=30, gt=0, le=300, description="Travel speed km/h"
     )
+    num_bands: int = Field(default=1, ge=1, description="Number of time bands")
     profile: Optional[str] = Field(default="driving", description="Travel profile")
 
     # --- Iso4App specific ---
@@ -51,7 +89,7 @@ class ComputeOptions(BaseModel):
 class IsochroneRequest(BaseModel):
     """Request for computing isochrones"""
 
-    centroids: List[CentroidRequest]
+    centroids: List[CentroidRequest] = Field(..., min_length=1)
     options: ComputeOptions = Field(default_factory=ComputeOptions)
     pois: Optional[List["POI"]] = Field(
         None, description="Points of interest for analysis"
@@ -65,10 +103,10 @@ class POI(BaseModel):
     id: str = Field(..., description="Unique POI identifier")
     lat: float = Field(..., ge=-90, le=90, description="Latitude")
     lon: float = Field(..., ge=-180, le=180, description="Longitude")
-    name: Optional[str] = Field(None, description="POI name")
-    region: Optional[str] = Field(None, description="Region")
-    municipality: Optional[str] = Field(None, description="Municipality")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional POI data")
+    name: Optional[str] = Field(default=None, description="POI name")
+    region: Optional[str] = Field(default=None, description="Region")
+    municipality: Optional[str] = Field(default=None, description="Municipality")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="Additional POI data")
 
 
 # ---------- COVERAGE ANALYSIS MODELS ----------
@@ -222,13 +260,12 @@ class SpatialAnalysisResult(BaseModel):
     analysis_timestamp: str = Field(..., description="ISO timestamp of analysis")
 
 
-# ---------- UPDATED API RESPONSE MODELS ----------
+# ---------- API RESPONSE MODELS ----------
 class IsochroneResult(BaseModel):
     """Single isochrone result with optional analysis"""
 
     centroid_id: str
     geojson: Dict[str, Any]
-    cached: bool = Field(default=False, description="Whether result was cached")
 
     # Optional analysis (populated when POIs provided)
     coverage: Optional[CentroidCoverage] = Field(
@@ -250,39 +287,16 @@ class IsochroneResponse(BaseModel):
     )
 
 
-# ---------- HELPER MODELS FOR STREAMLIT ----------
-class BandSummary(BaseModel):
-    """Simplified band summary for UI display"""
-
-    label: str = Field(..., description="Display label (e.g., 'Center1 - 15min')")
-    poi_count: int = Field(..., description="POI count")
-    percentage: float = Field(..., description="Percentage of total POIs")
+# ---------- RASTER MODELS ----------
+class RasterFileRef(BaseModel):
+    name: str | None = None
+    path: str
 
 
-class IntersectionSummary(BaseModel):
-    """Simplified intersection summary for UI display"""
-
-    label: str = Field(
-        ..., description="Intersection label (e.g., 'C1_15min & C2_30min')"
-    )
-    poi_count: int = Field(..., description="POI count in intersection")
-    participating_bands: List[str] = Field(..., description="List of band labels")
-
-
-class AnalysisSummary(BaseModel):
-    """High-level summary for dashboard display"""
-
-    total_pois: int
-    covered_pois: int
-    coverage_percentage: float
-
-    top_bands: List[BandSummary] = Field(..., description="Top 5 bands by coverage")
-    top_intersections: List[IntersectionSummary] = Field(
-        ..., description="Top 5 intersections by POI count"
-    )
-
-    oob_count: int = Field(..., description="Out-of-band POI count")
-    oob_percentage: float = Field(..., description="Out-of-band percentage")
+class RasterStatsRequest(BaseModel):
+    rasters: list[RasterFileRef]
+    isochrones: list[dict[str, Any]] | None = None
+    boundary_path: str | None = None
 
 
 # Enable forward references

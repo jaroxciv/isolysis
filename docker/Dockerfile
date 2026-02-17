@@ -46,6 +46,7 @@ FROM base AS streamlit
 COPY api/ ./api/
 COPY isolysis/ ./isolysis/
 COPY st_*.py ./
+COPY translations.py ./
 COPY .env* ./
 
 EXPOSE 8501

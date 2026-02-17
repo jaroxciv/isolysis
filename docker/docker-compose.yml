@@ -5,6 +5,7 @@ services:
       dockerfile: docker/Dockerfile
       target: api
     container_name: isolysis-api
+    tty: true
     ports:
       - "8000:8000"
     environment:
@@ -42,6 +43,7 @@ services:
       dockerfile: docker/Dockerfile
       target: streamlit
     container_name: isolysis-streamlit
+    tty: true
     ports:
       - "8501:8501"
     environment:
@@ -53,6 +55,8 @@ services:
       - ../api:/app/api
       - ../isolysis:/app/isolysis
       - ../st_app.py:/app/st_app.py
+      - ../st_utils.py:/app/st_utils.py
+      - ../translations.py:/app/translations.py
     command:
       [
         "uv",
@@ -80,6 +84,7 @@ services:
       dockerfile: docker/Dockerfile
       target: streamlit
     container_name: isolysis-streamlit-raster
+    tty: true
     ports:
       - "8502:8502"
     environment:
@@ -91,6 +96,8 @@ services:
       - ../api:/app/api
       - ../isolysis:/app/isolysis
       - ../st_raster_app.py:/app/st_raster_app.py
+      - ../st_utils.py:/app/st_utils.py
+      - ../translations.py:/app/translations.py
     command:
       [
         "uv",
