@@ -2,7 +2,7 @@ import json
 import os
 import tomllib
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, get_args
 
 from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -85,8 +85,9 @@ def root():
 @app.get("/health")
 def health_check():
     """Health check with provider availability"""
-    available_providers = []
-    for provider in ["osmnx", "iso4app", "mapbox"]:
+    all_providers: List[ProviderName] = list(get_args(ProviderName))
+    available_providers: List[ProviderName] = []
+    for provider in all_providers:
         if not validate_provider_keys(provider):
             available_providers.append(provider)
 
@@ -94,7 +95,7 @@ def health_check():
         "status": "healthy",
         "available_providers": available_providers,
         "unavailable_providers": [
-            p for p in ["osmnx", "iso4app", "mapbox"] if p not in available_providers
+            p for p in all_providers if p not in available_providers
         ],
     }
 
@@ -184,7 +185,8 @@ def compute_isochrones_endpoint(request: IsochroneRequest):
                 IsochroneResult(
                     centroid_id=centroid_id,
                     geojson=geojson,
-                    cached=False,  # Could implement caching logic here
+                    cached=False,
+                    coverage=None,
                 )
             )
 
@@ -256,7 +258,7 @@ def list_providers():
     """List available isochrone providers and their status"""
     providers_info = {}
 
-    for provider in ["osmnx", "iso4app", "mapbox"]:
+    for provider in get_args(ProviderName):
         error = validate_provider_keys(provider)
         providers_info[provider] = {
             "available": error is None,

@@ -3,8 +3,8 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 import alphashape
-import geopandas as gpd
 import networkx as nx
+import numpy as np
 import osmnx as ox
 import requests
 from dotenv import load_dotenv
@@ -105,14 +105,23 @@ class OsmnxIsochroneProvider(IsochroneProvider):
 
             # Project if needed
             if project_utm and not getattr(local_G.graph, "is_projected", False):
-                local_G = ox.projection.project_graph(local_G)
+                if isinstance(local_G, nx.MultiDiGraph):
+                    local_G = ox.projection.project_graph(local_G)
 
             # Add travel_time edge attribute once
-            for _, _, _, data in local_G.edges(keys=True, data=True):
-                data["travel_time"] = data["length"] / meters_per_minute
+            lengths = nx.get_edge_attributes(local_G, "length")
+            travel_times = {
+                edge: length / meters_per_minute for edge, length in lengths.items()
+            }
+            nx.set_edge_attributes(local_G, travel_times, "travel_time")
 
             # Find center node in projected space if needed
-            center_node = ox.distance.nearest_nodes(local_G, lon, lat)
+            mdg = (
+                local_G
+                if isinstance(local_G, nx.MultiDiGraph)
+                else nx.MultiDiGraph(local_G)
+            )
+            center_node: int = ox.nearest_nodes(mdg, X=float(lon), Y=float(lat))
 
             for band in bands:
                 trip_time = band * 60  # hours to minutes
@@ -128,17 +137,18 @@ class OsmnxIsochroneProvider(IsochroneProvider):
                     )
                     continue
 
-                coords = [
-                    (data["x"], data["y"]) for _, data in subgraph.nodes(data=True)
+                coords: list[tuple[float, float]] = [
+                    (float(data["x"]), float(data["y"]))
+                    for _, data in subgraph.nodes(data=True)
                 ]
 
                 poly = None
                 if len(coords) >= 4:
                     try:
-                        poly = alphashape.alphashape(coords, alpha)
+                        poly = alphashape.alphashape(np.array(coords), alpha)
                         # If alpha shape is MultiPolygon, get the largest
                         if hasattr(poly, "geoms"):
-                            poly = max(list(poly.geoms), key=lambda g: g.area)
+                            poly = max(list(poly.geoms), key=lambda g: g.area)  # type: ignore[union-attr]  # guarded by hasattr
                     except Exception as e:
                         logger.warning(
                             f"Alpha shape failed, falling back to convex hull: {e}"

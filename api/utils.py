@@ -9,6 +9,7 @@ import streamlit as st
 from loguru import logger
 
 from isolysis.io import Coordinate
+from translations import t
 
 REQUIRED_COLUMNS = {"Categoria", "Subcategoria", "Nombre", "Latitud", "Longitud"}
 
@@ -25,7 +26,7 @@ def call_api(url: str, payload: Dict) -> Optional[Dict]:
         result = response.json()
         return result
     except Exception as e:
-        st.error(f"API Error: {str(e)}")
+        st.error(t("api.error", error=str(e)))
         return None
 
 

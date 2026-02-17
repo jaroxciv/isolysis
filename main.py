@@ -2,16 +2,12 @@ import argparse
 import json
 import os
 
-import geopandas as gpd
 import osmnx as ox
-import pandas as pd
 from loguru import logger
 
-from isolysis.analysis import (
-    analyze_isochrone_coverage,
-    analyze_isochrone_intersections,
-)
-from isolysis.io import Centroid, Coordinate, IsoCounts, IsoRequest, IsoResponse
+from api.schemas import POI
+from isolysis.analysis import compute_spatial_analysis
+from isolysis.io import Centroid, Coordinate, IsoRequest
 from isolysis.isochrone import compute_isochrones
 from isolysis.utils import harmonize_isochrones_columns, log_timing
 
@@ -61,10 +57,10 @@ def main():
         coordinates=coords,
         centroids=centroids,
     )
-    centroids = [c.model_dump() for c in req.centroids]
+    centroids_dicts = [c.model_dump() for c in req.centroids]
 
     isochrones = compute_isochrones(
-        centroids,
+        centroids_dicts,
         provider=args.provider,
         travel_speed_kph=30,
         interval=0.25,
@@ -76,34 +72,27 @@ def main():
     gdf.to_file(out_path, driver="GPKG", layer="isochrones")
     logger.success(f"Isochrone polygons saved to {out_path}")
 
-    coords_df = pd.DataFrame([c.model_dump() for c in coords])
-    points_gdf = gpd.GeoDataFrame(
-        coords_df,
-        geometry=gpd.points_from_xy(coords_df.lon, coords_df.lat),
-        crs="EPSG:4326",
+    # Convert coordinates to POIs for spatial analysis
+    pois = [
+        POI(
+            id=c.id or f"poi_{i}",
+            lat=c.lat,
+            lon=c.lon,
+            name=c.name,
+            region=c.region,
+            municipality=c.municipality,
+            metadata=None,
+        )
+        for i, c in enumerate(coords)
+    ]
+
+    # Run spatial analysis
+    result = compute_spatial_analysis(gdf, pois)
+
+    # Log results
+    output_json = json.dumps(
+        result.model_dump(), indent=2, ensure_ascii=False, default=str
     )
-
-    # --- Analyze isochrone coverage
-    coverage_result = analyze_isochrone_coverage(gdf, points_gdf)
-    intersections = analyze_isochrone_intersections(gdf, points_gdf)
-
-    # Convert to IsoResponse
-    # Expecting coverage_result to have: total_points, counts (list), oob_count, oob_ids
-    response = IsoResponse(
-        total_points=coverage_result["total_points"],
-        counts=[
-            IsoCounts(label=c["label"], count=c["count"], ids=c["ids"])
-            for c in coverage_result["counts"]
-        ],
-        intersections=(
-            [IsoCounts(**c) for c in intersections] if intersections else None
-        ),
-        oob_count=coverage_result["oob_count"],
-        oob_ids=coverage_result["oob_ids"],
-    )
-
-    # Log results (as a table and JSON)
-    output_json = json.dumps(response.model_dump(), indent=2, ensure_ascii=False)
     logger.info(
         "Isochrone coverage analysis result:\n{}",
         output_json,

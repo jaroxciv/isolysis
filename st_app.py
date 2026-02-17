@@ -13,6 +13,7 @@ from api.utils import (
     get_pos,
     handle_coordinate_upload,
 )
+from translations import get_selectbox_options, t
 
 # -------------------------
 # ENV + CONFIG
@@ -39,8 +40,12 @@ DEFAULT_COLORS = [
     "#cc5200",
 ]
 
+# Initialize language before set_page_config
+if "lang" not in st.session_state:
+    st.session_state.lang = "es"
+
 # Page config
-st.set_page_config(page_title="🗺️ Simple Isochrone Map", layout="wide")
+st.set_page_config(page_title=t("page.isochrone_title"), layout="wide")
 
 
 # -------------------------
@@ -97,16 +102,22 @@ def build_feature_group():
             cov_data = coverage_by_center[name]
             viable_str = ""
             if cov_data["viable"] is True:
-                viable_str = f"<br>Max Prod: {max_prod:,.0f}<br>Viable: Yes"
+                viable_str = (
+                    f"<br>{t('tooltip.max_prod')}: {max_prod:,.0f}"
+                    f"<br>{t('tooltip.viable_yes')}"
+                )
             elif cov_data["viable"] is False:
-                viable_str = f"<br>Max Prod: {max_prod:,.0f}<br>Viable: No"
+                viable_str = (
+                    f"<br>{t('tooltip.max_prod')}: {max_prod:,.0f}"
+                    f"<br>{t('tooltip.viable_no')}"
+                )
 
             tooltip_html = (
                 f"<b>{name}</b><br>"
-                f"Time Band: {cov_data['band_label']}<br>"
-                f"POIs Covered: {cov_data['poi_count']}<br>"
-                f"Coverage: {cov_data['coverage_percentage']:.1f}%<br>"
-                f"Prod Sum: {cov_data['production_sum']:,.0f}{viable_str}"
+                f"{t('tooltip.time_band')}: {cov_data['band_label']}<br>"
+                f"{t('tooltip.pois_covered')}: {cov_data['poi_count']}<br>"
+                f"{t('tooltip.coverage')}: {cov_data['coverage_percentage']:.1f}%<br>"
+                f"{t('tooltip.prod_sum')}: {cov_data['production_sum']:,.0f}{viable_str}"
             )
             tooltip = fl.Tooltip(tooltip_html)
         else:
@@ -118,20 +129,22 @@ def build_feature_group():
             viable_str = ""
             if cov_data["viable"] is True:
                 viable_str = (
-                    f"<br><b>Max Prod:</b> {max_prod:,.0f}<br><b>Viable:</b> ✅ Yes"
+                    f"<br><b>{t('tooltip.max_prod')}:</b> {max_prod:,.0f}"
+                    f"<br><b>{t('viable.yes')}:</b> ✅"
                 )
             elif cov_data["viable"] is False:
                 viable_str = (
-                    f"<br><b>Max Prod:</b> {max_prod:,.0f}<br><b>Viable:</b> ❌ No"
+                    f"<br><b>{t('tooltip.max_prod')}:</b> {max_prod:,.0f}"
+                    f"<br><b>{t('viable.no')}:</b> ❌"
                 )
 
             popup_html = f"""
             <div style="font-family: sans-serif; font-size: 12px;">
             <b>{name}</b><br>
-            <b>Time Band:</b> {cov_data["band_label"]}<br>
-            <b>POIs Covered:</b> {cov_data["poi_count"]}<br>
-            <b>Coverage:</b> {cov_data["coverage_percentage"]:.1f}%<br>
-            <b>Prod Sum:</b> {cov_data["production_sum"]:,.0f}{viable_str}
+            <b>{t("tooltip.time_band")}:</b> {cov_data["band_label"]}<br>
+            <b>{t("tooltip.pois_covered")}:</b> {cov_data["poi_count"]}<br>
+            <b>{t("tooltip.coverage")}:</b> {cov_data["coverage_percentage"]:.1f}%<br>
+            <b>{t("tooltip.prod_sum")}:</b> {cov_data["production_sum"]:,.0f}{viable_str}
             </div>
             """
         else:
@@ -153,10 +166,10 @@ def build_feature_group():
                 location=[coord.lat, coord.lon],
                 radius=3,
                 popup=f"""
-                <b>Lat</b>: {coord.lat:.5f}<br>
-                <b>Lon</b>: {coord.lon:.5f}<br>
-                <b>Region</b>: {coord.region or "N/A"}<br>
-                <b>Municipality</b>: {coord.municipality or "N/A"}
+                <b>{t("tooltip.lat")}</b>: {coord.lat:.5f}<br>
+                <b>{t("tooltip.lon")}</b>: {coord.lon:.5f}<br>
+                <b>{t("tooltip.region")}</b>: {coord.region or t("tooltip.na")}<br>
+                <b>{t("tooltip.municipality")}</b>: {coord.municipality or t("tooltip.na")}
                 """,
                 tooltip=label,
                 color="black",
@@ -225,81 +238,93 @@ def draw_map():
 
 def handle_coordinate_upload_sidebar():
     """Handle coordinate upload in sidebar"""
-    st.subheader("📂 Upload Coordinates")
+    st.subheader(t("upload.header"))
     uploaded_file = st.file_uploader(
-        "Upload coordinates (JSON, CSV, XLSX)",
+        t("upload.label"),
         type=["json", "csv", "xlsx"],
-        help=(
-            "Upload a file with coordinates. "
-            "CSV/XLSX must include columns: "
-            "Categoria, Subcategoria, Nombre, Latitud, Longitud."
-        ),
+        help=t("upload.help"),
     )
 
     if uploaded_file is not None:
         coordinates = handle_coordinate_upload(uploaded_file)
         if coordinates:
-            st.success(f"✅ Loaded {len(coordinates)} coordinates")
+            st.success(t("upload.success", count=len(coordinates)))
             st.session_state.uploaded_coordinates = coordinates
             if coordinates:
                 coord_center = get_coordinates_center(coordinates)
                 st.session_state.coord_center = coord_center
 
-    # 🔹 Add remove button if we have uploaded coordinates
+    # Add remove button if we have uploaded coordinates
     if (
         hasattr(st.session_state, "uploaded_coordinates")
         and st.session_state.uploaded_coordinates
     ):
-        if st.button("🗑️ Remove Uploaded Coordinates"):
+        if st.button(t("upload.remove_btn")):
             del st.session_state.uploaded_coordinates
             if hasattr(st.session_state, "coord_center"):
                 del st.session_state.coord_center
-            st.success("✅ Uploaded coordinates removed")
+            st.success(t("upload.removed"))
             st.rerun()
 
 
 def render_sidebar():
     """Render complete sidebar"""
     with st.sidebar:
-        st.header("⚙️ Isochrone Settings")
+        # Language selector at top of sidebar
+        lang_options = ["Español", "English"]
+        lang_values = ["es", "en"]
+        current_idx = lang_values.index(st.session_state.lang)
+        selected_lang = st.selectbox(
+            t("lang.label"),
+            options=lang_options,
+            index=current_idx,
+            key="lang_selector",
+        )
+        new_lang = lang_values[lang_options.index(selected_lang)]
+        if new_lang != st.session_state.lang:
+            st.session_state.lang = new_lang
+            st.rerun()
+
+        st.header(t("sidebar.header"))
 
         # Provider selection
         provider = st.selectbox(
-            "Provider",
+            t("sidebar.provider"),
             options=["osmnx", "mapbox", "iso4app"],
             index=2,  # default to iso4app since client uses it
-            help="Choose routing engine",
+            help=t("sidebar.provider_help"),
         )
         st.session_state.provider = provider
 
         # Travel time unit selector
+        time_unit_labels = [t("sidebar.minutes"), t("sidebar.hours")]
         time_unit = st.radio(
-            "Time Unit",
-            options=["Minutes", "Hours"],
+            t("sidebar.time_unit"),
+            options=time_unit_labels,
             index=0,
             horizontal=True,
         )
 
         # Travel time slider - adjusts based on unit
-        if time_unit == "Minutes":
+        if time_unit == t("sidebar.minutes"):
             time_value = st.slider(
-                "Travel Time",
+                t("sidebar.travel_time"),
                 min_value=5,
                 max_value=120,
                 value=30,
                 step=5,
-                help="Maximum travel time from center (minutes)",
+                help=t("sidebar.travel_time_help_min"),
             )
             rho = time_value / 60.0  # Convert to hours for API
             st.session_state.rho_minutes = time_value
         else:
             time_value = st.slider(
-                "Travel Time",
+                t("sidebar.travel_time"),
                 min_value=0.5,
                 max_value=6.0,
                 value=0.5,
                 step=0.5,
-                help="Maximum travel time from center (hours)",
+                help=t("sidebar.travel_time_help_hrs"),
             )
             rho = time_value  # Already in hours
             st.session_state.rho_minutes = int(time_value * 60)
@@ -308,29 +333,41 @@ def render_sidebar():
 
         # Iso4App-specific options
         if provider == "iso4app":
-            iso_type = st.selectbox(
-                "Isoline Type",
-                ["isochrone", "isodistance"],
+            # Isoline type
+            iso_labels, iso_values = get_selectbox_options("isoline_type")
+            selected_iso = st.selectbox(
+                t("sidebar.isoline_type"),
+                iso_labels,
                 index=0,
-                help="Compute by travel time (isochrone) or distance (isodistance)",
+                help=t("sidebar.isoline_type_help"),
             )
-            mobility = st.selectbox(
-                "Travel Mode",
-                ["motor_vehicle", "bicycle", "pedestrian"],
+            iso_type = iso_values[iso_labels.index(selected_iso)]
+
+            # Travel mode
+            mode_labels, mode_values = get_selectbox_options("travel_mode")
+            selected_mode = st.selectbox(
+                t("sidebar.travel_mode"),
+                mode_labels,
                 index=0,
             )
-            speed_type = st.selectbox(
-                "Speed Profile",
-                ["very_low", "low", "normal", "fast"],
+            mobility = mode_values[mode_labels.index(selected_mode)]
+
+            # Speed profile
+            speed_labels, speed_values = get_selectbox_options("speed_profile")
+            selected_speed = st.selectbox(
+                t("sidebar.speed_profile"),
+                speed_labels,
                 index=2,
             )
+            speed_type = speed_values[speed_labels.index(selected_speed)]
+
             speed_limit = st.number_input(
-                "Maximum Speed (km/h)",
+                t("sidebar.max_speed"),
                 min_value=10.0,
                 max_value=200.0,
                 value=50.0,
                 step=5.0,
-                help="Optional: maximum speed used for Iso4App isochrones",
+                help=t("sidebar.max_speed_help"),
             )
 
             st.session_state.iso4app_type = iso_type
@@ -342,19 +379,31 @@ def render_sidebar():
         handle_coordinate_upload_sidebar()
 
         st.markdown("---")
-        st.write("**Settings:**")
-        st.write(f"Provider: {provider}")
-        if time_unit == "Minutes":
-            st.write(f"Travel time: {time_value} min")
+        st.write(t("sidebar.settings_label"))
+        st.write(t("sidebar.settings_provider", provider=provider))
+        if time_unit == t("sidebar.minutes"):
+            st.write(t("sidebar.settings_time_min", value=time_value))
         else:
-            st.write(f"Travel time: {time_value}h")
+            st.write(t("sidebar.settings_time_hrs", value=time_value))
 
         if provider == "iso4app":
-            st.write(f"Type: {st.session_state.iso4app_type}")
-            st.write(f"Mobility: {st.session_state.iso4app_mobility}")
-            st.write(f"Speed: {st.session_state.iso4app_speed_type}")
+            st.write(t("sidebar.settings_type", type=st.session_state.iso4app_type))
+            st.write(
+                t(
+                    "sidebar.settings_mobility",
+                    mobility=st.session_state.iso4app_mobility,
+                )
+            )
+            st.write(
+                t("sidebar.settings_speed", speed=st.session_state.iso4app_speed_type)
+            )
             if st.session_state.get("iso4app_speed_limit"):
-                st.write(f"Speed limit: {st.session_state.iso4app_speed_limit} km/h")
+                st.write(
+                    t(
+                        "sidebar.settings_speed_limit",
+                        limit=st.session_state.iso4app_speed_limit,
+                    )
+                )
 
     return provider, rho
 
@@ -394,7 +443,7 @@ def process_isochrone_request(center_name, lat, lng, rho, provider):
                 properties = feature.get("properties", {})
                 band_hours = properties.get("band_hours")
                 if band_hours is None:
-                    st.warning("band_hours not found in feature properties")
+                    st.warning(t("iso.band_missing"))
                     continue
                 bands_data.append(
                     {
@@ -419,15 +468,15 @@ def process_isochrone_request(center_name, lat, lng, rho, provider):
                 cache_msg = " (cached)" if cached else ""
                 band_count = len(bands_data)
                 st.success(
-                    f"✅ Added {center_name} with {band_count} band(s){cache_msg}"
+                    t("iso.added", name=center_name, count=band_count, cache=cache_msg)
                 )
                 return True
             else:
-                st.error(f"❌ No valid band data found for {center_name}")
+                st.error(t("iso.no_band_data", name=center_name))
         else:
-            st.error(f"❌ No geojson data returned for {center_name}")
+            st.error(t("iso.no_geojson", name=center_name))
     else:
-        st.error(f"❌ Failed to compute isochrone for {center_name}")
+        st.error(t("iso.failed", name=center_name))
     return False
 
 
@@ -439,18 +488,18 @@ def handle_map_click(map_data, provider, rho):
 
     if data is not None:
         lat, lng = data
-        st.success(f"📍 **Clicked:** {lat:.5f}, {lng:.5f}")
+        st.success(t("map.clicked", lat=f"{lat:.5f}", lng=f"{lng:.5f}"))
 
         col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
-            st.metric("Latitude", f"{lat:.5f}")
+            st.metric(t("map.latitude"), f"{lat:.5f}")
         with col2:
-            st.metric("Longitude", f"{lng:.5f}")
+            st.metric(t("map.longitude"), f"{lng:.5f}")
         with col3:
-            if st.button("➕ Add Center", type="primary"):
+            if st.button(t("map.add_center"), type="primary"):
                 center_name = f"Center{len(st.session_state.centers) + 1}"
 
-                with st.spinner(f"Computing isochrone for {center_name}..."):
+                with st.spinner(t("map.computing", name=center_name)):
                     success = process_isochrone_request(
                         center_name, lat, lng, rho, provider
                     )
@@ -461,9 +510,7 @@ def handle_map_click(map_data, provider, rho):
                         st.rerun()
 
     else:
-        st.info(
-            "👆 Click anywhere on the map to add a center (you can click on existing isochrones too)"
-        )
+        st.info(t("map.click_hint"))
 
 
 def render_center_controls():
@@ -473,27 +520,29 @@ def render_center_controls():
 
         col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
         with col1:
-            st.subheader(f"📍 Stored Centers ({len(st.session_state.centers)})")
+            st.subheader(t("centers.header", count=len(st.session_state.centers)))
         with col2:
-            if st.button("↶ Undo Last"):
+            if st.button(t("centers.undo")):
                 if st.session_state.centers:
                     last_key = list(st.session_state.centers.keys())[-1]
                     del st.session_state.centers[last_key]
                     if last_key in st.session_state.isochrones:
                         del st.session_state.isochrones[last_key]
-                    st.success(f"🗑️ Removed {last_key}")
+                    st.success(t("centers.removed", name=last_key))
         with col3:
-            if st.button("🧹 Clear Polygons"):
+            if st.button(t("centers.clear_polygons")):
                 count = len(st.session_state.isochrones)
                 st.session_state.isochrones = {}
-                st.success(f"🧹 Cleared {count} polygons")
+                st.success(t("centers.cleared_polygons", count=count))
         with col4:
-            if st.button("🗑️ Clear All"):
+            if st.button(t("centers.clear_all")):
                 center_count = len(st.session_state.centers)
                 poly_count = len(st.session_state.isochrones)
                 st.session_state.centers = {}
                 st.session_state.isochrones = {}
-                st.success(f"🗑️ Cleared {center_count} centers & {poly_count} polygons")
+                st.success(
+                    t("centers.cleared_all", centers=center_count, polygons=poly_count)
+                )
 
         # Build production sum lookup from analysis results if available
         prod_sum_by_center = {}
@@ -517,7 +566,9 @@ def render_center_controls():
                 num_bands = len(iso_data["bands"])
                 rho_min = iso_data.get("rho_minutes", int(iso_data.get("rho", 1) * 60))
                 speed = iso_data.get("speed_kph", "N/A")
-                bands_info = f" - {num_bands} band(s) | {rho_min}min @ {speed} km/h"
+                bands_info = t(
+                    "centers.bands_info", bands=num_bands, minutes=rho_min, speed=speed
+                )
 
             # Add production sum and viability if available
             prod_sum_info = ""
@@ -527,12 +578,14 @@ def render_center_controls():
                 viable_tag = ""
                 if max_prod > 0:
                     if prod_sum <= max_prod:
-                        viable_tag = ' | <span style="color: #4CAF50;">Viable</span>'
+                        viable_tag = (
+                            f' | <span style="color: #4CAF50;">{t("viable.yes")}</span>'
+                        )
                     else:
                         viable_tag = (
-                            ' | <span style="color: #F44336;">Not Viable</span>'
+                            f' | <span style="color: #F44336;">{t("viable.no")}</span>'
                         )
-                prod_sum_info = f" | <u>Prod: {prod_sum:,.0f}</u>{viable_tag}"
+                prod_sum_info = f" | <u>Agg Prod: {prod_sum:,.0f}</u>{viable_tag}"
 
             col_color, col_info, col_lbl, col_input = st.columns([0.3, 2.5, 0.5, 0.7])
 
@@ -542,7 +595,7 @@ def render_center_controls():
                     "color", DEFAULT_COLORS[idx % len(DEFAULT_COLORS)]
                 )
                 new_color = st.color_picker(
-                    "Color",
+                    t("centers.color_label"),
                     value=current_color,
                     key=f"color_{name}",
                     label_visibility="collapsed",
@@ -557,13 +610,13 @@ def render_center_controls():
                 )
             with col_lbl:
                 st.markdown(
-                    '<div style="padding-top: 0.5em; font-size: 1.1em; text-align: right;">Max Prod:</div>',
+                    f'<div style="padding-top: 0.5em; font-size: 1.1em; text-align: right;">{t("centers.max_prod_label")}</div>',
                     unsafe_allow_html=True,
                 )
             with col_input:
                 current_max_prod = coords.get("max_production", 0.0)
                 new_max_prod = st.number_input(
-                    "Max Prod",
+                    t("centers.max_prod_label"),
                     min_value=0.0,
                     value=float(current_max_prod),
                     step=100.0,
@@ -643,43 +696,42 @@ def send_analysis_request(provider, rho):
 
 def render_analysis_summary(analysis):
     """Render high-level analysis summary"""
-    st.subheader("📊 Analysis Summary")
+    st.subheader(t("summary.header"))
 
     col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     with col1:
         st.metric(
-            "Total POIs",
+            t("summary.total_pois"),
             analysis["total_pois"],
-            help="Total points of interest analyzed",
+            help=t("summary.total_pois_help"),
         )
 
     with col2:
         noi = analysis.get("network_optimization_index", None)
-        help_msg = "(X - Y - Z) / total_pois - measures how efficiently the network covers POIs"
         if noi is not None:
             st.metric(
-                "Network Optimization Index",
+                t("summary.noi"),
                 f"{noi:.3f}",
-                help=help_msg,
+                help=t("summary.noi_help"),
             )
         else:
-            st.metric("Network Optimization Index", "N/A")
+            st.metric(t("summary.noi"), "N/A")
 
     with col3:
         coverage = analysis["global_coverage_percentage"]
         st.metric(
-            "Coverage",
+            t("summary.coverage"),
             f"{coverage:.1f}%",
-            help="Percentage of POIs covered by at least one isochrone",
+            help=t("summary.coverage_help"),
         )
 
     with col4:
         intersections = analysis["intersection_analysis"]["total_intersections"]
         st.metric(
-            "Intersections",
+            t("summary.intersections"),
             intersections,
-            help="Number of overlapping areas between different centers",
+            help=t("summary.intersections_help"),
         )
 
     with col5:
@@ -687,25 +739,25 @@ def render_analysis_summary(analysis):
         oob_count = analysis["oob_analysis"]["total_oob_pois"]
         covered_count = total_pois - oob_count
         st.metric(
-            "Covered",
+            t("summary.covered"),
             covered_count,
-            help="POIs covered by at least one isochrone",
+            help=t("summary.covered_help"),
         )
 
     with col6:
         oob_count = analysis["oob_analysis"]["total_oob_pois"]
         st.metric(
-            "Uncovered",
+            t("summary.uncovered"),
             oob_count,
             delta=f"-{analysis['oob_analysis']['oob_percentage']:.1f}%",
             delta_color="inverse",
-            help="POIs outside all coverage areas",
+            help=t("summary.uncovered_help"),
         )
 
 
 def render_coverage_analysis(coverage_analysis):
     """Render coverage analysis in a single combined table"""
-    st.subheader("🎯 Coverage Analysis")
+    st.subheader(t("coverage.header"))
 
     # Build combined table data from all centers
     table_data = []
@@ -715,20 +767,22 @@ def render_coverage_analysis(coverage_analysis):
             # Determine viable display value
             viable_value = band.get("viable")
             if viable_value is True:
-                viable_display = "✅ Yes"
+                viable_display = t("coverage.viable_yes")
             elif viable_value is False:
-                viable_display = "❌ No"
+                viable_display = t("coverage.viable_no")
             else:
-                viable_display = "-"
+                viable_display = t("coverage.viable_na")
 
             table_data.append(
                 {
-                    "Center": center_id,
-                    "Time Band": band["band_label"],
-                    "POIs Covered": band["poi_count"],
-                    "Coverage %": f"{band['coverage_percentage']:.1f}%",
-                    "Prod Sum": f"{band.get('production_sum', 0):.1f}",
-                    "Viable": viable_display,
+                    t("coverage.col_center"): center_id,
+                    t("coverage.col_time_band"): band["band_label"],
+                    t("coverage.col_pois_covered"): band["poi_count"],
+                    t(
+                        "coverage.col_coverage_pct"
+                    ): f"{band['coverage_percentage']:.1f}%",
+                    t("coverage.col_prod_sum"): f"{band.get('production_sum', 0):.1f}",
+                    t("coverage.col_viable"): viable_display,
                 }
             )
 
@@ -737,30 +791,35 @@ def render_coverage_analysis(coverage_analysis):
 
         # Summary stats
         total_centers = len(coverage_analysis)
-        viable_count = sum(1 for row in table_data if "Yes" in row["Viable"])
-        not_viable_count = sum(1 for row in table_data if "No" in row["Viable"])
+        viable_key = t("coverage.col_viable")
+        viable_count = sum(
+            1 for row in table_data if row.get(viable_key) == t("coverage.viable_yes")
+        )
+        not_viable_count = sum(
+            1 for row in table_data if row.get(viable_key) == t("coverage.viable_no")
+        )
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total Centers", total_centers)
+            st.metric(t("coverage.total_centers"), total_centers)
         with col2:
-            st.metric("Viable", viable_count)
+            st.metric(t("coverage.viable_count"), viable_count)
         with col3:
-            st.metric("Not Viable", not_viable_count)
+            st.metric(t("coverage.not_viable_count"), not_viable_count)
 
 
 def render_intersection_analysis(intersection_analysis):
     """Render intersection analysis"""
     if intersection_analysis["total_intersections"] == 0:
-        st.info("ℹ️ No intersections found between centers")
+        st.info(t("intersection.no_intersections"))
         return
 
-    st.subheader("🔄 Intersection Analysis")
+    st.subheader(t("intersection.header"))
 
     # Pairwise intersections
     pairwise = intersection_analysis["pairwise_intersections"]
     if pairwise:
-        st.write("**2-way Overlaps:**")
+        st.write(t("intersection.pairwise"))
 
         # Sort by POI count for better presentation
         sorted_pairwise = sorted(pairwise, key=lambda x: x["poi_count"], reverse=True)
@@ -773,15 +832,15 @@ def render_intersection_analysis(intersection_analysis):
             with col1:
                 st.write(f"• {label}")
             with col2:
-                st.code(f"{poi_count} POIs")
+                st.code(t("intersection.pois_label", count=poi_count))
 
         if len(pairwise) > 5:
-            st.caption(f"... and {len(pairwise) - 5} more intersections")
+            st.caption(t("intersection.more", count=len(pairwise) - 5))
 
     # Multi-way intersections
     multiway = intersection_analysis["multiway_intersections"]
     if multiway:
-        st.write("**Multi-way Overlaps:**")
+        st.write(t("intersection.multiway"))
         for intersection in multiway:
             label = intersection["intersection_label"]
             poi_count = intersection["poi_count"]
@@ -791,31 +850,29 @@ def render_intersection_analysis(intersection_analysis):
             with col1:
                 st.write(f"• {label} ({overlap_type})")
             with col2:
-                st.code(f"{poi_count} POIs")
+                st.code(t("intersection.pois_label", count=poi_count))
 
 
 def render_out_of_band_analysis(oob_analysis):
     """Render out-of-band analysis"""
     if oob_analysis["total_oob_pois"] == 0:
-        st.success("🎉 All POIs are covered by at least one center!")
+        st.success(t("oob.all_covered"))
         return
 
-    st.subheader("🚫 Uncovered Areas")
+    st.subheader(t("oob.header"))
 
     oob_count = oob_analysis["total_oob_pois"]
     oob_percentage = oob_analysis["oob_percentage"]
 
-    st.warning(
-        f"⚠️ {oob_count} POIs ({oob_percentage:.1f}%) are not covered by any center"
-    )
+    st.warning(t("oob.warning", count=oob_count, pct=f"{oob_percentage:.1f}"))
 
     # Show some uncovered POI IDs
     oob_ids = oob_analysis["oob_poi_ids"]
     if len(oob_ids) <= 10:
-        st.write("**Uncovered POIs:**", ", ".join(oob_ids))
+        st.write(t("oob.uncovered_pois"), ", ".join(oob_ids))
     else:
         st.write(
-            f"**Uncovered POIs:** {', '.join(oob_ids[:10])}, ... and {len(oob_ids) - 10} more"
+            f"{t('oob.uncovered_pois')} {', '.join(oob_ids[:10])}, {t('oob.and_more', count=len(oob_ids) - 10)}"
         )
 
 
@@ -877,7 +934,7 @@ def render_export_button(analysis):
     csv_data = df.to_csv(index=False)
 
     st.download_button(
-        label="📥 Export Coverage Data",
+        label=t("export.btn"),
         data=csv_data,
         file_name=filename,
         mime="text/csv",
@@ -893,7 +950,7 @@ def render_spatial_analysis_panel():
         return
 
     st.markdown("---")
-    st.header("🧮 Spatial Analysis")
+    st.header(t("analysis.header"))
 
     # Get current settings
     provider = st.session_state.get("provider", "osmnx")
@@ -902,8 +959,10 @@ def render_spatial_analysis_panel():
     col1, col2 = st.columns([1, 3])
 
     with col1:
-        if st.button("🔍 Analyze Coverage", type="primary", use_container_width=True):
-            with st.spinner("Computing spatial analysis..."):
+        if st.button(
+            t("analysis.analyze_btn"), type="primary", use_container_width=True
+        ):
+            with st.spinner(t("analysis.computing")):
                 try:
                     result = send_analysis_request(provider, rho)
 
@@ -913,18 +972,21 @@ def render_spatial_analysis_panel():
                         and result["spatial_analysis"]
                     ):
                         st.session_state.analysis_result = result["spatial_analysis"]
-                        st.success("✅ Analysis complete!")
+                        st.success(t("analysis.complete"))
                         st.rerun()  # Refresh to update map tooltips
                     else:
-                        st.error("❌ Analysis failed - no POI data in response")
+                        st.error(t("analysis.failed_no_data"))
 
                 except Exception as e:
-                    st.error(f"❌ Analysis failed: {str(e)}")
+                    st.error(t("analysis.failed", error=str(e)))
 
     with col2:
         st.caption(
-            f"Analyze {len(st.session_state.centers)} centers "
-            f"against {len(st.session_state.uploaded_coordinates)} POIs"
+            t(
+                "analysis.caption",
+                centers=len(st.session_state.centers),
+                pois=len(st.session_state.uploaded_coordinates),
+            )
         )
 
     # Show analysis results if available
@@ -938,7 +1000,9 @@ def render_spatial_analysis_panel():
         render_export_button(analysis)
 
         # Detailed analysis in tabs
-        tab1, tab2, tab3 = st.tabs(["🎯 Coverage", "🔄 Intersections", "🚫 Uncovered"])
+        tab1, tab2, tab3 = st.tabs(
+            [t("tab.coverage"), t("tab.intersections"), t("tab.uncovered")]
+        )
 
         with tab1:
             render_coverage_analysis(analysis["coverage_analysis"])
@@ -965,8 +1029,7 @@ def main():
     provider, rho = render_sidebar()
 
     # Main content
-    st.title("🗺️ Click to Add Isochrone Centers")
-    st.markdown("Click anywhere on the map to see coordinates")
+    st.title(t("main.title"))
 
     # Draw map (fragment)
     map_data = draw_map()

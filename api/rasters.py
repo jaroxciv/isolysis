@@ -37,12 +37,14 @@ def _compute_stats_for_polygon(geom, raster_path: str) -> Dict[str, float]:
         )[0]
 
         # Replace any None or negative no-data leftovers with 0 for population context
-        cleaned = {k: (0 if v is None or v < 0 else v) for k, v in stats.items()}
+        cleaned: Dict[str, float] = {
+            str(k): (0.0 if v is None or v < 0 else float(v)) for k, v in stats.items()
+        }
         return cleaned
 
     except Exception as e:
         logger.error(f"Failed raster stats for {raster_path}: {e}")
-        return {k: None for k in stats_list}
+        return {k: 0.0 for k in stats_list}
 
 
 def _compute_area_km2(geom) -> float:
@@ -60,7 +62,7 @@ def _compute_area_km2(geom) -> float:
         try:
             return float(geom.area)
         except Exception:
-            return None
+            return 0.0
 
 
 def _compute_intersection_stats(iso_gdf: gpd.GeoDataFrame, raster_path: str):
@@ -196,7 +198,8 @@ def raster_stats_endpoint(payload: Dict[str, Any]):
     """
     try:
         rasters = payload.get("rasters")
-        boundary_path = resolve_project_path(payload.get("boundary_path"))
+        raw_boundary = payload.get("boundary_path")
+        boundary_path = resolve_project_path(raw_boundary) if raw_boundary else None
         isochrones = payload.get("isochrones")
 
         if not rasters:

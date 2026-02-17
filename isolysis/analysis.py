@@ -1,11 +1,12 @@
 from datetime import datetime
 from itertools import combinations
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import geopandas as gpd
 import pandas as pd
 from loguru import logger
 from shapely.geometry import Point
+from shapely.geometry.base import BaseGeometry
 
 from api.schemas import (
     POI,
@@ -32,7 +33,10 @@ def format_time_display(hours: float) -> str:
 def pois_to_geodataframe(pois: List[POI]) -> gpd.GeoDataFrame:
     """Convert POI list to GeoDataFrame"""
     if not pois:
-        return gpd.GeoDataFrame(columns=["id", "geometry"], crs="EPSG:4326")
+        return gpd.GeoDataFrame(
+            {"id": pd.Series(dtype="str"), "geometry": pd.Series(dtype="object")},
+            crs="EPSG:4326",
+        )
 
     logger.debug(f"Converting {len(pois)} POIs to GeoDataFrame")
 
@@ -79,9 +83,9 @@ def compute_band_coverage(
     max_production_by_centroid = max_production_by_centroid or {}
 
     for idx, row in isochrones_gdf.iterrows():
-        centroid_id = row.get("centroid_id") or row.get("id")
-        band_hours = row["band_hours"]
-        geometry = row["geometry"]
+        centroid_id = str(row.get("centroid_id") or row.get("id") or f"unknown_{idx}")
+        band_hours = float(row["band_hours"])
+        geometry = cast(BaseGeometry, row["geometry"])
 
         # Fast spatial intersection using within()
         matches = pois_gdf[pois_gdf.geometry.within(geometry)]
@@ -99,8 +103,8 @@ def compute_band_coverage(
                 production_sum += float(meta.get("Prod", 0) or 0)
 
         # Calculate viability using per-centroid max_production
-        viable = None
-        max_production = max_production_by_centroid.get(centroid_id)
+        viable: Optional[bool] = None
+        max_production = max_production_by_centroid.get(centroid_id, None)
         if max_production is not None and max_production > 0:
             viable = production_sum <= max_production
 
@@ -193,6 +197,7 @@ def compute_band_intersections(
             pairwise_intersections=[],
             multiway_intersections=[],
             max_overlap_count=0,
+            total_intersection_area_km2=None,
         )
 
     logger.info(
@@ -202,8 +207,8 @@ def compute_band_intersections(
     # Prepare polygon data with labels (legacy format for speed)
     polys = []
     for idx, row in isochrones_gdf.iterrows():
-        centroid_id = row.get("centroid_id") or row.get("id")
-        band_hours = row["band_hours"]
+        centroid_id = str(row.get("centroid_id") or row.get("id") or f"unknown_{idx}")
+        band_hours = float(row["band_hours"])
         band_label = format_time_display(band_hours)
         label = f"{centroid_id}_{band_label}"
 
@@ -212,7 +217,7 @@ def compute_band_intersections(
                 "label": label,
                 "centroid_id": centroid_id,
                 "band_hours": band_hours,
-                "geometry": row.geometry,
+                "geometry": cast(BaseGeometry, row.geometry),
             }
         )
 
@@ -326,7 +331,8 @@ def compute_out_of_band_analysis(
     # Fast approach: collect all covered POI IDs from individual band analysis
     covered_ids = set()
     for idx, row in isochrones_gdf.iterrows():
-        matches = pois_gdf[pois_gdf.geometry.within(row.geometry)]
+        geom = cast(BaseGeometry, row.geometry)
+        matches = pois_gdf[pois_gdf.geometry.within(geom)]
         covered_ids.update(matches["id"].tolist())
 
     # Find uncovered POIs
@@ -436,6 +442,7 @@ def compute_spatial_analysis(
                 pairwise_intersections=[],
                 multiway_intersections=[],
                 max_overlap_count=0,
+                total_intersection_area_km2=None,
             ),
             oob_analysis=OutOfBandAnalysis(
                 total_oob_pois=0, oob_poi_ids=[], oob_percentage=0.0
@@ -522,7 +529,7 @@ def _calculate_area_km2(geometry) -> float:
         gdf_projected = gdf_temp.to_crs("EPSG:3857")  # Web Mercator
         area_m2 = gdf_projected.geometry.area.iloc[0]
         return area_m2 / 1_000_000  # Convert to km²
-    except:
+    except Exception:
         return 0.0
 
 

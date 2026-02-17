@@ -9,11 +9,13 @@ from io import BytesIO
 
 import folium as fl
 import geopandas as gpd
+import matplotlib.colors
 import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
 import streamlit as st
 from dotenv import find_dotenv, load_dotenv
+from folium.raster_layers import ImageOverlay
 from PIL import Image
 from streamlit_folium import st_folium
 
@@ -24,6 +26,7 @@ from api.utils import (
     get_map_center,
     get_pos,
 )
+from translations import get_selectbox_options, t
 
 warnings.filterwarnings("ignore", message=".*GPKG application_id.*")
 
@@ -44,7 +47,11 @@ API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
 ISOCHRONES_ENDPOINT = f"{API_URL}/isochrones"
 RASTER_STATS_ENDPOINT = f"{API_URL}/raster-stats"
 
-st.set_page_config(page_title="📈 Iso-Raster Analysis", layout="wide")
+# Initialize language before set_page_config
+if "lang" not in st.session_state:
+    st.session_state.lang = "es"
+
+st.set_page_config(page_title=t("page.raster_title"), layout="wide")
 
 
 # ---------------------------
@@ -67,7 +74,7 @@ def get_raster_center(raster_path: str):
             lat_center = (bounds.top + bounds.bottom) / 2
             return lat_center, lon_center
     except Exception as e:
-        st.warning(f"⚠️ Could not read raster center: {e}")
+        st.warning(t("raster.warning_center", error=str(e)))
         return None
 
 
@@ -112,7 +119,7 @@ def read_boundary(uploaded_file):
         gdf = gpd.read_file(f"zip://{tmp_path}")
         return gdf
 
-    st.warning("Unsupported boundary format.")
+    st.warning(t("raster.unsupported_boundary"))
     return None
 
 
@@ -131,7 +138,7 @@ def raster_to_png_path(_file_bytes: bytes, _name: str, colormap="viridis"):
     mask = data <= 0
     data = np.where(mask, np.nan, data)
     vmin, vmax = np.nanmin(data), np.nanmax(data)
-    norm = plt.Normalize(vmin=vmin, vmax=vmax)
+    norm = matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)
     cmap = plt.get_cmap(colormap)
     rgba_img = cmap(norm(data))
     rgba_img[..., 3] = np.where(np.isnan(data), 0, 1)
@@ -170,7 +177,7 @@ def add_raster_to_feature_group(
             st.session_state.raster_overlays[uploaded_file.name] = (temp_path, bounds)
 
         # --- Wrap overlay in a FeatureGroup (for smoother handling) ---
-        fl.raster_layers.ImageOverlay(
+        ImageOverlay(
             image=temp_path,
             bounds=[[bounds.bottom, bounds.left], [bounds.top, bounds.right]],
             opacity=opacity,
@@ -181,7 +188,7 @@ def add_raster_to_feature_group(
         ).add_to(fg)
 
     except Exception as e:
-        st.warning(f"⚠️ Could not render raster overlay: {e}")
+        st.warning(t("raster.overlay_error", error=str(e)))
 
 
 def add_boundary_to_feature_group(
@@ -191,7 +198,7 @@ def add_boundary_to_feature_group(
     try:
         gdf = read_boundary(uploaded_file)
         if gdf is None or gdf.empty:
-            st.warning("⚠️ Boundary file contains no geometries.")
+            st.warning(t("raster.no_geometries"))
             return
 
         fl.GeoJson(
@@ -203,7 +210,6 @@ def add_boundary_to_feature_group(
                 "weight": 2,
                 "opacity": 0.8,
             },
-            # tooltip=layer_name,
         ).add_to(fg)  # Add to FeatureGroup instead of map
 
         # Center map
@@ -214,7 +220,7 @@ def add_boundary_to_feature_group(
             st.session_state.coord_center = (centroid_wgs84.y, centroid_wgs84.x)
 
     except Exception as e:
-        st.warning(f"⚠️ Could not render boundary overlay: {e}")
+        st.warning(t("raster.boundary_error", error=str(e)))
 
 
 # ---------------------------
@@ -222,55 +228,79 @@ def add_boundary_to_feature_group(
 # ---------------------------
 def render_sidebar():
     with st.sidebar:
-        st.header("⚙️ Iso-Raster Settings")
+        # Language selector at top of sidebar
+        lang_options = ["Español", "English"]
+        lang_values = ["es", "en"]
+        current_idx = lang_values.index(st.session_state.lang)
+        selected_lang = st.selectbox(
+            t("lang.label"),
+            options=lang_options,
+            index=current_idx,
+            key="lang_selector",
+        )
+        new_lang = lang_values[lang_options.index(selected_lang)]
+        if new_lang != st.session_state.lang:
+            st.session_state.lang = new_lang
+            st.rerun()
+
+        st.header(t("sidebar.raster_header"))
 
         # Travel time (rho) - in minutes for UI, converted to hours for API
         rho_minutes = st.slider(
-            "Travel Time (minutes)",
+            t("sidebar.travel_time_minutes"),
             min_value=5,
             max_value=60,
             value=30,
             step=5,
-            help="Maximum travel time for each centroid.",
+            help=t("sidebar.travel_time_centroid_help"),
         )
         rho = rho_minutes / 60.0  # Convert to hours for API
 
         # Iso4App-specific options
-        iso_type = st.selectbox(
-            "Isoline Type",
-            ["isochrone", "isodistance"],
+        iso_labels, iso_values = get_selectbox_options("isoline_type")
+        selected_iso = st.selectbox(
+            t("sidebar.isoline_type"),
+            iso_labels,
             index=0,
-            help="Compute by travel time (isochrone) or distance (isodistance)",
+            help=t("sidebar.isoline_type_help"),
         )
-        mobility = st.selectbox(
-            "Travel Mode",
-            ["motor_vehicle", "bicycle", "pedestrian"],
+        iso_type = iso_values[iso_labels.index(selected_iso)]
+
+        mode_labels, mode_values = get_selectbox_options("travel_mode")
+        selected_mode = st.selectbox(
+            t("sidebar.travel_mode"),
+            mode_labels,
             index=0,
         )
-        speed_type = st.selectbox(
-            "Speed Profile",
-            ["very_low", "low", "normal", "fast"],
+        mobility = mode_values[mode_labels.index(selected_mode)]
+
+        speed_labels, speed_values = get_selectbox_options("speed_profile")
+        selected_speed = st.selectbox(
+            t("sidebar.speed_profile"),
+            speed_labels,
             index=2,
         )
+        speed_type = speed_values[speed_labels.index(selected_speed)]
+
         speed_limit = st.number_input(
-            "Maximum Speed (km/h)",
+            t("sidebar.max_speed"),
             min_value=10.0,
             max_value=200.0,
             value=50.0,
             step=5.0,
-            help="Optional: maximum speed used for Iso4App isochrones",
+            help=t("sidebar.max_speed_help"),
         )
 
         # Colormap
         colormap = st.selectbox(
-            "Color Scheme",
+            t("sidebar.color_scheme"),
             ["viridis", "plasma", "magma", "inferno", "cividis", "Reds", "Blues"],
             index=0,
         )
 
         # Raster upload
         uploaded_rasters = st.file_uploader(
-            "📂 Upload Raster(s) (.tif)",
+            t("sidebar.upload_rasters"),
             type=["tif", "tiff"],
             accept_multiple_files=True,
             key=f"raster_uploader_{st.session_state.raster_uploader_key}",
@@ -282,7 +312,7 @@ def render_sidebar():
             st.session_state.boundary_uploader_key = 0
 
         uploaded_boundary = st.file_uploader(
-            "Upload boundary file (.gpkg, .geojson, .zip for shapefile)",
+            t("sidebar.upload_boundary"),
             type=["gpkg", "geojson", "zip"],
             key=f"boundary_uploader_{st.session_state.boundary_uploader_key}",
         )
@@ -304,18 +334,13 @@ def render_sidebar():
         # RASTER CENTERING
         # ---------------------------
         if uploaded_rasters:
-            st.success(f"✅ Loaded {len(uploaded_rasters)} raster(s)")
+            st.success(t("raster.loaded_rasters", count=len(uploaded_rasters)))
 
         # ---------------------------
         # BOUNDARY CENTERING
         # ---------------------------
-        if uploaded_boundary:
-            file_names = (
-                [f.name for f in uploaded_boundary]
-                if isinstance(uploaded_boundary, list)
-                else [uploaded_boundary.name]
-            )
-            st.success(f"✅ Loaded boundary file(s): {', '.join(file_names)}")
+        if uploaded_boundary is not None:
+            st.success(t("raster.loaded_boundary", names=uploaded_boundary.name))
 
     return rho, colormap
 
@@ -341,7 +366,7 @@ def process_isochrone(center_name, lat, lon, rho):
 
     result = call_api(ISOCHRONES_ENDPOINT, payload)
     if not result or "results" not in result:
-        st.error("❌ Isochrone request failed.")
+        st.error(t("iso.request_failed"))
         return None
 
     first = result["results"][0]
@@ -357,7 +382,7 @@ def process_isochrone(center_name, lat, lon, rho):
                 "geojson_feature": feat,
             }
         )
-    st.success(f"✅ Isochrone created for {center_name}")
+    st.success(t("iso.created", name=center_name))
     return bands
 
 
@@ -384,7 +409,6 @@ def draw_map():
                     "fillOpacity": 0.4,
                     "opacity": 0.8,
                 },
-                # tooltip=f"{cname} - {band['band_label']}",
                 control=True,
                 overlay=True,
                 show=True,
@@ -404,10 +428,6 @@ def draw_map():
         add_raster_to_feature_group(
             fg, first_raster, layer_name=first_raster.name, opacity=0.6
         )
-
-    # --- Toggle rasters based on file name
-    ## TODO: Add if necessary
-    # fl.LayerControl(collapsed=False).add_to(m)
 
     # --- Compute map center and zoom ---
     if hasattr(st.session_state, "coord_center"):
@@ -434,10 +454,10 @@ def handle_map_click(map_data):
     if not map_data.get("last_clicked"):
         return
     lat, lon = get_pos(map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"])
-    st.success(f"📍 Clicked: {lat:.5f}, {lon:.5f}")
-    if st.button("➕ Add Isochrone Here"):
+    st.success(t("map.clicked", lat=f"{lat:.5f}", lng=f"{lon:.5f}"))
+    if st.button(t("map.add_isochrone")):
         cname = f"Center{len(st.session_state.isochrones) + 1}"
-        with st.spinner(f"Computing isochrone for {cname}..."):
+        with st.spinner(t("map.computing", name=cname)):
             bands = process_isochrone(cname, lat, lon, st.session_state.rho)
             if bands:
                 # Store isochrone with metadata
@@ -457,7 +477,7 @@ def handle_map_click(map_data):
 def compute_raster_stats():
     """Send rasters + polygon source (isochrone or boundary) to backend."""
     if not st.session_state.uploaded_rasters:
-        st.warning("Upload at least one raster file.")
+        st.warning(t("raster.upload_raster_warning"))
         return
 
     boundary = st.session_state.get("uploaded_boundary")
@@ -465,10 +485,10 @@ def compute_raster_stats():
 
     # --- Validate polygon source ---
     if not boundary and not isochrones_exist:
-        st.warning("Upload a boundary file or add isochrones first.")
+        st.warning(t("raster.upload_boundary_warning"))
         return
     if boundary and isochrones_exist:
-        st.error("❌ Please use either boundary or isochrones, not both.")
+        st.error(t("raster.both_error"))
         return
 
     # --- Save rasters temporarily (shared, stable folder) ---
@@ -482,7 +502,7 @@ def compute_raster_stats():
             out.write(f.getvalue())
         raster_paths.append(path)
 
-    payload = {
+    payload: dict[str, object] = {
         "rasters": [{"name": os.path.basename(p), "path": p} for p in raster_paths]
     }
 
@@ -502,19 +522,18 @@ def compute_raster_stats():
         ]
 
     # --- Call API ---
-    with st.spinner("Computing raster statistics..."):
-        # st.write("Payload:", payload)
+    with st.spinner(t("raster.computing_stats")):
         result = call_api(RASTER_STATS_ENDPOINT, payload)
         if not result:
-            st.error("❌ Raster stats request failed.")
+            st.error(t("raster.stats_failed"))
             return
         if "results" not in result:
-            st.error("❌ Unexpected API response format.")
+            st.error(t("raster.stats_unexpected"))
             st.json(result)
             return
 
         st.session_state.raster_results = result["results"]
-        st.success("✅ Raster stats computed!")
+        st.success(t("raster.stats_done"))
 
 
 # ---------------------------
@@ -523,7 +542,7 @@ def compute_raster_stats():
 def render_results():
     if not st.session_state.get("raster_results"):
         return
-    st.subheader("📊 Raster Statistics")
+    st.subheader(t("raster.stats_header"))
     st.dataframe(st.session_state.raster_results, use_container_width=True)
 
 
@@ -543,14 +562,14 @@ def main():
     if "raster_uploader_key" not in st.session_state:
         st.session_state.raster_uploader_key = 0
     render_sidebar()
-    st.title("📈 Iso-Raster Analysis")
-    st.caption("Compute raster statistics inside isochrones and their intersections.")
+    st.title(t("raster.title"))
+    st.caption(t("raster.caption"))
     map_data = draw_map()
     handle_map_click(map_data)
 
     # --- Manage loaded isochrones ---
     if st.session_state.isochrones:
-        st.subheader("🗺️ Loaded Isochrones")
+        st.subheader(t("raster.loaded_isochrones"))
         for cname in list(st.session_state.isochrones.keys()):
             cols = st.columns([4, 1])
             iso_data = st.session_state.isochrones[cname]
@@ -558,11 +577,12 @@ def main():
             rho_min = iso_data.get("rho_minutes", int(iso_data.get("rho", 1) * 60))
             speed = iso_data.get("speed_kph", "N/A")
             cols[0].write(
-                f"**{cname}** - {num_bands} band(s) | {rho_min}min @ {speed} km/h"
+                f"**{cname}**"
+                + t("centers.bands_info", bands=num_bands, minutes=rho_min, speed=speed)
             )
-            if cols[1].button("❌ Remove", key=f"remove_{cname}"):
+            if cols[1].button(t("raster.remove_btn"), key=f"remove_{cname}"):
                 del st.session_state.isochrones[cname]
-                st.toast(f"Isochrone '{cname}' removed.")
+                st.toast(t("raster.isochrone_removed", name=cname))
                 st.rerun()
 
     # --- Clear All button ---
@@ -575,30 +595,30 @@ def main():
         col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 
         with col1:
-            if st.session_state.isochrones and st.button("🗑️ Clear Isochrones"):
+            if st.session_state.isochrones and st.button(t("raster.clear_isochrones")):
                 count = len(st.session_state.isochrones)
                 st.session_state.isochrones = {}
-                st.toast(f"Cleared {count} isochrone(s)")
+                st.toast(t("raster.cleared_isochrones", count=count))
                 st.rerun()
 
         with col2:
             if st.session_state.get("uploaded_boundary") and st.button(
-                "🗑️ Clear Boundary"
+                t("raster.clear_boundary")
             ):
                 st.session_state.uploaded_boundary = None
                 st.session_state.boundary_uploader_key += 1  # Reset the uploader
-                st.toast("Boundary cleared")
+                st.toast(t("raster.boundary_cleared"))
                 st.rerun()
 
         with col3:
             if st.session_state.get("uploaded_rasters") and st.button(
-                "🗑️ Clear Rasters"
+                t("raster.clear_rasters")
             ):
                 raster_count = len(st.session_state.uploaded_rasters)
                 st.session_state.uploaded_rasters = []
                 st.session_state.raster_overlays = {}
                 st.session_state.raster_uploader_key += 1  # Reset the uploader
-                st.toast(f"Cleared {raster_count} raster(s)")
+                st.toast(t("raster.cleared_rasters", count=raster_count))
                 st.rerun()
 
         with col4:
@@ -606,7 +626,7 @@ def main():
                 st.session_state.isochrones
                 or st.session_state.get("uploaded_boundary")
                 or st.session_state.get("uploaded_rasters")
-            ) and st.button("🗑️ Clear All", type="secondary"):
+            ) and st.button(t("raster.clear_all"), type="secondary"):
                 iso_count = len(st.session_state.isochrones)
                 st.session_state.isochrones = {}
                 st.session_state.uploaded_boundary = None
@@ -614,12 +634,10 @@ def main():
                 st.session_state.uploaded_rasters = []
                 st.session_state.raster_overlays = {}
                 st.session_state.raster_uploader_key += 1  # Reset the uploader
-                st.toast(
-                    f"Cleared everything ({iso_count} isochrones, boundary, rasters)"
-                )
+                st.toast(t("raster.cleared_all", count=iso_count))
                 st.rerun()
 
-    if st.button("📊 Compute Raster Stats", type="primary"):
+    if st.button(t("raster.compute_btn"), type="primary"):
         compute_raster_stats()
 
     render_results()
