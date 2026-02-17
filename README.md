@@ -1,10 +1,10 @@
 # Isolysis
 
-**Isochrone overlap analyzer for multi-center, multi-distance spatial queries with interactive web interface and comprehensive spatial analysis.**
+**Isochrone overlap analyzer for multi-center, multi-distance spatial queries with interactive web interface, raster analysis, and comprehensive spatial analysis. Bilingual (Spanish/English) UI.**
 
 ## Overview
 
-Isolysis is a modular, production-grade Python package for calculating and analyzing isochrones (reachable areas) from multiple centers (hubs) over real road networks. It supports multiple travel times, custom intervals, and comprehensive spatial analysis with POI coverage and intersection analysis. The project includes both a REST API and an interactive Streamlit web interface for real-time isochrone visualization and analysis.
+Isolysis is a modular, production-grade Python package for calculating and analyzing isochrones (reachable areas) from multiple centers (hubs) over real road networks. It supports multiple travel times, custom intervals, and comprehensive spatial analysis with POI coverage and intersection analysis. The project includes a REST API, an interactive Streamlit web interface for real-time isochrone visualization, and a dedicated raster analysis app for zonal statistics. The UI defaults to Spanish (targeting Latin American markets) with an English fallback and a language switcher.
 
 ## Features
 
@@ -26,6 +26,8 @@ Isolysis is a modular, production-grade Python package for calculating and analy
 * **Coordinate upload:** Bulk upload POIs via JSON files for analysis
 * **Spatial analysis dashboard:** Coverage metrics, intersection analysis, and uncovered area identification
 * **Dynamic mapping:** Fragment-based updates without page refresh
+* **Raster analysis app:** Dedicated Streamlit app for zonal statistics against population/demographic rasters
+* **Bilingual UI:** Spanish (default) and English with a sidebar language switcher
 
 ### REST API
 * **FastAPI backend:** High-performance API with automatic documentation
@@ -33,11 +35,18 @@ Isolysis is a modular, production-grade Python package for calculating and analy
 * **Multiple output formats:** GeoJSON, coverage statistics, intersection matrices
 * **Provider flexibility:** Easy switching between routing providers
 
+### Raster Analysis
+* **Zonal statistics:** Compute min, max, mean, median, sum, and count against population/demographic rasters
+* **Intersection statistics:** Automatic n-way intersection analysis across isochrones
+* **Boundary support:** Upload shapefiles or GeoJSON boundaries for zonal stats
+* **Interactive visualization:** Raster overlay on Folium maps with configurable colormaps and opacity
+
 ### Technical Features
 * **Modern architecture:** Pydantic models, async processing, and clean separation of concerns
 * **Comprehensive testing:** Unit tests for all analysis functions and API endpoints
 * **Scientific visualization:** Matplotlib colormaps for professional isochrone display
 * **Caching and optimization:** Fragment-based UI updates and efficient spatial operations
+* **Localization:** Centralized translation system (`translations.py`) with flat namespaced keys, `.format()` templates for dynamic values, and selectbox label-to-API-value mappings
 
 ## Installation
 
@@ -66,9 +75,9 @@ Isolysis is a modular, production-grade Python package for calculating and analy
 
 ### Web Interface (Recommended)
 
-**Option 1: Use the PowerShell script (Windows):**
-```powershell
-.\run.ps1
+**Option 1: Use the shell script:**
+```sh
+./run.sh
 ```
 
 **Option 2: Manual startup:**
@@ -76,8 +85,11 @@ Isolysis is a modular, production-grade Python package for calculating and analy
 # Terminal 1: Start API server
 uv run uvicorn api.app:app --reload --port 8000
 
-# Terminal 2: Start Streamlit interface  
+# Terminal 2: Start Streamlit isochrone interface
 uv run streamlit run st_app.py
+
+# Terminal 3 (optional): Start Streamlit raster analysis interface
+uv run streamlit run st_raster_app.py --server.port 8502
 ```
 
 Then open your browser to `http://localhost:8501` and start clicking on the map!
@@ -133,18 +145,31 @@ print(f"Intersections: {analysis['intersection_analysis']['total_intersections']
 
 ## Web Interface Features
 
+### Isochrone App (`st_app.py`)
 * **Interactive mapping:** Click anywhere to add isochrone centers with real-time computation
 * **Provider selection:** Choose between OSMnx, Mapbox, or Iso4App with automatic availability detection
 * **Time bands:** Generate 1-5 equally-spaced time bands with proper formatting (e.g., "20min, 40min, 1h")
 * **Scientific color schemes:** 9 matplotlib colormaps (viridis, plasma, magma, etc.) for professional visualization
 * **Coordinate upload:** Bulk upload POIs from JSON files with metadata support
-* **Spatial analysis dashboard:** 
+* **Spatial analysis dashboard:**
   - Coverage metrics (Total POIs, Coverage %, Intersections, Covered, Uncovered)
   - Per-center coverage analysis with best-performing bands
   - Intersection analysis showing 2-way and multi-way overlaps
   - Out-of-band analysis identifying uncovered areas
 * **Real-time updates:** Fragment-based map updates without page refresh
-* **Export capabilities:** Download results as GeoPackage or JSON
+* **Export capabilities:** Download results as CSV with date suffix, including region/municipality columns
+
+### Raster Analysis App (`st_raster_app.py`)
+* **Raster overlay:** Visualize population/demographic rasters on an interactive Folium map
+* **Zonal statistics:** Compute statistics for isochrone polygons and uploaded boundary files
+* **Intersection analysis:** Automatic pairwise and n-way intersection statistics
+* **Results table:** Sortable, filterable results with export to CSV
+
+### Language Support
+* **Default language:** Spanish (targeting Latin American markets)
+* **Language switcher:** Sidebar selector in both apps; persists via `st.session_state`
+* **Centralized translations:** All UI strings in `translations.py` with flat namespaced keys
+* **Dynamic values:** `.format(**kwargs)` templates for runtime interpolation
 
 ## Spatial Analysis Output
 
@@ -223,13 +248,16 @@ uv run pytest tests --cov=isolysis --cov=api
 ## Directory Structure
 
 ```
-├── st_app.py            # Interactive Streamlit web interface
-├── run.ps1              # PowerShell script to run both services
+├── st_app.py            # Streamlit isochrone visualization app
+├── st_raster_app.py     # Streamlit raster analysis app
+├── translations.py      # Bilingual (ES/EN) translation strings and helpers
+├── run.sh               # Shell script to run API + Streamlit
 ├── main.py              # CLI script for batch isochrone generation
 ├── plot_isos.py         # Visualization script
 ├── fetch_network.py     # Network download utility
 ├── api/
 │   ├── app.py           # FastAPI REST server with spatial analysis
+│   ├── rasters.py       # Raster zonal statistics endpoint
 │   ├── schemas.py       # Pydantic models for requests/responses
 │   └── utils.py         # API utility functions
 ├── isolysis/
@@ -245,12 +273,12 @@ uv run pytest tests --cov=isolysis --cov=api
 │   └── inputs/          # Test data files
 ├── networks/            # Cached OSMnx networks (not tracked)
 ├── outputs/             # Generated files (GeoPackages, maps, analysis)
-└── data/                # Input datasets
+└── data/                # Input datasets and raster files
 ```
 
 ## Requirements
 
-* Python 3.12+
+* Python 3.13+
 * **Core Libraries:**
   - [OSMnx](https://github.com/gboeing/osmnx) - Road network analysis
   - [GeoPandas](https://geopandas.org/) - Spatial data processing
@@ -262,9 +290,13 @@ uv run pytest tests --cov=isolysis --cov=api
 * **Data & Validation:**
   - [Pydantic](https://docs.pydantic.dev/) - Data validation and serialization
   - [Loguru](https://github.com/Delgan/loguru) - Structured logging
+* **Raster Analysis:**
+  - [Rasterio](https://rasterio.readthedocs.io/) - Raster I/O
+  - [rasterstats](https://pythonhosted.org/rasterstats/) - Zonal statistics
 * **Scientific Computing:**
   - [Matplotlib](https://matplotlib.org/) - Scientific colormaps
   - [NumPy](https://numpy.org/) & [Pandas](https://pandas.pydata.org/) - Data processing
+  - [scikit-learn](https://scikit-learn.org/) - Clustering and spatial analysis
 * **Development:**
   - [uv](https://github.com/astral-sh/uv) - Fast Python package manager
   - [pytest](https://pytest.org/) - Testing framework
@@ -328,6 +360,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - Built with modern Python ecosystem: FastAPI, Streamlit, Pydantic
 - Spatial analysis powered by OSMnx, GeoPandas, and Shapely
+- Raster analysis powered by Rasterio and rasterstats
 - Scientific visualization using Matplotlib colormaps
 - Testing infrastructure with pytest and comprehensive coverage
 
