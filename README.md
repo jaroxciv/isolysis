@@ -108,7 +108,7 @@ Then open your browser to `http://localhost:8501` and start clicking on the map!
 
 3. Plot results:
    ```sh
-   uv run plot_isos.py --provider mapbox --plot-points
+   uv run plot_isos.py --provider mapbox
    ```
 
 ## API Usage
@@ -250,27 +250,36 @@ uv run pytest tests --cov=isolysis --cov=api
 ```
 ├── st_app.py            # Streamlit isochrone visualization app
 ├── st_raster_app.py     # Streamlit raster analysis app
+├── st_utils.py          # Shared Streamlit/Folium utilities
 ├── translations.py      # Bilingual (ES/EN) translation strings and helpers
 ├── run.sh               # Shell script to run API + Streamlit
 ├── main.py              # CLI script for batch isochrone generation
 ├── plot_isos.py         # Visualization script
 ├── fetch_network.py     # Network download utility
 ├── api/
-│   ├── app.py           # FastAPI REST server with spatial analysis
+│   ├── app.py           # FastAPI REST server (thin endpoint layer)
+│   ├── services.py      # Business logic for isochrone computation
 │   ├── rasters.py       # Raster zonal statistics endpoint
-│   ├── schemas.py       # Pydantic models for requests/responses
-│   └── utils.py         # API utility functions
+│   └── path_utils.py    # Secure path resolution utilities
 ├── isolysis/
+│   ├── models.py        # All Pydantic models (single source of truth)
+│   ├── constants.py     # Shared constants (CRS, defaults)
 │   ├── isochrone.py     # Multi-provider isochrone calculation
-│   ├── analysis.py      # Spatial analysis functions (coverage, intersections)
-│   ├── io.py            # I/O models and validation
+│   ├── analysis.py      # Spatial analysis (coverage, intersections)
+│   ├── raster.py        # Raster computation (zonal stats, area, intersections)
 │   ├── utils.py         # Core utilities and harmonization
 │   └── plot.py          # Plotting utilities
 ├── tests/
 │   ├── test_api.py      # API integration tests
 │   ├── test_analysis.py # Analysis function unit tests
-│   ├── conftest.py      # Test configuration
-│   └── inputs/          # Test data files
+│   ├── test_rasters.py  # Raster endpoint tests
+│   └── conftest.py      # Test configuration
+├── docs/
+│   └── releases/
+│       └── changelog.md # Version history (Keep a Changelog format)
+├── docker/
+│   ├── Dockerfile       # Multi-stage build (base → api, streamlit)
+│   └── docker-compose.yml
 ├── networks/            # Cached OSMnx networks (not tracked)
 ├── outputs/             # Generated files (GeoPackages, maps, analysis)
 └── data/                # Input datasets and raster files
