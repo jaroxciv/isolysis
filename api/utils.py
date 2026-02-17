@@ -33,16 +33,17 @@ def get_map_center():
     """Get map center based on uploaded coordinates or last added centroid"""
     # Priority 1: Use uploaded coordinates center
     if hasattr(st.session_state, "coord_center"):
-        return list(st.session_state.coord_center)
+        c = st.session_state.coord_center
+        return (float(c[0]), float(c[1]))
 
     # Priority 2: Use last centroid
     if st.session_state.centers:
         last_center_name = list(st.session_state.centers.keys())[-1]
         last_coords = st.session_state.centers[last_center_name]
-        return [last_coords["lat"], last_coords["lng"]]
+        return (float(last_coords["lat"]), float(last_coords["lng"]))
 
-    # Default: El Salvador 🇸🇻
-    return [13.7942, -88.8965]
+    # Default: El Salvador
+    return (13.7942, -88.8965)
 
 
 def format_time_display(hours: float) -> str:
@@ -85,8 +86,10 @@ def get_band_color(
     hex_color = mcolors.rgb2hex(rgba[:3])
 
     # Create darker border color by reducing brightness
-    border_rgba = tuple(max(0, c * 0.7) for c in rgba[:3]) + (rgba[3],)
-    border_hex = mcolors.rgb2hex(border_rgba[:3])
+    r, g, b = rgba[0], rgba[1], rgba[2]
+    border_hex = mcolors.rgb2hex(
+        (max(0.0, r * 0.7), max(0.0, g * 0.7), max(0.0, b * 0.7))
+    )
 
     return hex_color, border_hex
 
@@ -217,7 +220,7 @@ def _parse_tabular_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
         df = df[(df["Latitud"].between(-90, 90)) & (df["Longitud"].between(-180, 180))]
 
         coordinates = []
-        for i, row in df.iterrows():
+        for i, (_, row) in enumerate(df.iterrows()):
             prod_value = float(row.get("Prod", 0) or 0) if has_prod else 0.0
             region_value = row.get("Region") if has_region else None
             municipality_value = row.get("Municipality") if has_municipality else None
@@ -232,9 +235,9 @@ def _parse_tabular_coordinates(uploaded_file) -> Optional[List[Coordinate]]:
             coordinates.append(
                 Coordinate(
                     id=f"poi_{i + 1}",
-                    name=row["Nombre"],
-                    lat=row["Latitud"],
-                    lon=row["Longitud"],
+                    name=str(row["Nombre"]),
+                    lat=float(row["Latitud"]),
+                    lon=float(row["Longitud"]),
                     region=region_value,
                     department=None,
                     municipality=municipality_value,
@@ -313,7 +316,7 @@ def add_coordinates_to_map(folium_map, coordinates: List[Coordinate]):
         ).add_to(folium_map)
 
 
-def resolve_project_path(path: str, must_exist: bool = True) -> str:
+def resolve_project_path(path: str, must_exist: bool = True) -> Optional[str]:
     """
     Normalize and resolve a file path (absolute or relative) within the project.
 

@@ -6,7 +6,6 @@ from dotenv import find_dotenv, load_dotenv
 from streamlit_folium import st_folium
 
 from api.utils import (
-    add_coordinates_to_map,
     call_api,
     format_time_display,
     get_coordinates_center,
@@ -174,9 +173,7 @@ def build_feature_group():
     ):
         if "bands" in isochrone_data and isochrone_data["bands"]:
             band_data = isochrone_data["bands"][0]  # single polygon only
-            band_hours = band_data["band_hours"]
             geojson_feature = band_data["geojson_feature"]
-            time_display = format_time_display(band_hours)
 
             # Get per-center color or use default from palette
             center_coords = st.session_state.centers.get(center_name, {})
@@ -220,7 +217,7 @@ def draw_map():
         zoom=9,
         key="main_map",
         feature_group_to_add=fg,
-        height=500,
+        height=700,
         width=None,
         returned_objects=["last_clicked"],
     )
@@ -353,11 +350,11 @@ def render_sidebar():
             st.write(f"Travel time: {time_value}h")
 
         if provider == "iso4app":
-            st.write(f"Type: {iso_type}")
-            st.write(f"Mobility: {mobility}")
-            st.write(f"Speed: {speed_type}")
-            if speed_limit:
-                st.write(f"Speed limit: {speed_limit} km/h")
+            st.write(f"Type: {st.session_state.iso4app_type}")
+            st.write(f"Mobility: {st.session_state.iso4app_mobility}")
+            st.write(f"Speed: {st.session_state.iso4app_speed_type}")
+            if st.session_state.get("iso4app_speed_limit"):
+                st.write(f"Speed limit: {st.session_state.iso4app_speed_limit} km/h")
 
     return provider, rho
 
@@ -522,12 +519,22 @@ def render_center_controls():
                 speed = iso_data.get("speed_kph", "N/A")
                 bands_info = f" - {num_bands} band(s) | {rho_min}min @ {speed} km/h"
 
-            # Add production sum if available
+            # Add production sum and viability if available
             prod_sum_info = ""
             if name in prod_sum_by_center:
-                prod_sum_info = f" | Prod: {prod_sum_by_center[name]:.1f}"
+                prod_sum = prod_sum_by_center[name]
+                max_prod = coords.get("max_production", 0.0)
+                viable_tag = ""
+                if max_prod > 0:
+                    if prod_sum <= max_prod:
+                        viable_tag = ' | <span style="color: #4CAF50;">Viable</span>'
+                    else:
+                        viable_tag = (
+                            ' | <span style="color: #F44336;">Not Viable</span>'
+                        )
+                prod_sum_info = f" | <u>Prod: {prod_sum:,.0f}</u>{viable_tag}"
 
-            col_color, col_info, col_max_prod = st.columns([0.5, 2.5, 1])
+            col_color, col_info, col_lbl, col_input = st.columns([0.3, 2.5, 0.5, 0.7])
 
             with col_color:
                 # Get current color or assign default
@@ -544,10 +551,16 @@ def render_center_controls():
                     st.session_state.centers[name]["color"] = new_color
 
             with col_info:
-                st.write(
-                    f"**{name}:** {coords['lat']:.5f}, {coords['lng']:.5f}{bands_info}{prod_sum_info}"
+                st.markdown(
+                    f'<div style="padding-top: 0.5em; font-size: 1.1em;"><b>{name}:</b> {coords["lat"]:.5f}, {coords["lng"]:.5f}{bands_info}{prod_sum_info}</div>',
+                    unsafe_allow_html=True,
                 )
-            with col_max_prod:
+            with col_lbl:
+                st.markdown(
+                    '<div style="padding-top: 0.5em; font-size: 1.1em; text-align: right;">Max Prod:</div>',
+                    unsafe_allow_html=True,
+                )
+            with col_input:
                 current_max_prod = coords.get("max_production", 0.0)
                 new_max_prod = st.number_input(
                     "Max Prod",
@@ -556,7 +569,6 @@ def render_center_controls():
                     step=100.0,
                     key=f"max_prod_{name}",
                     label_visibility="collapsed",
-                    help=f"Max production for {name}",
                 )
                 if new_max_prod != current_max_prod:
                     st.session_state.centers[name]["max_production"] = new_max_prod
